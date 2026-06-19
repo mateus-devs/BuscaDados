@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import src.banco as db
+import banco as db
 import sqlite3
 
 # Configuração global da página do Streamlit
