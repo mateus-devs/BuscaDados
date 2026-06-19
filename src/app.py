@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import banco as db
+import src.banco as db
 import sqlite3
 
 # Configuração global da página do Streamlit
@@ -466,7 +466,7 @@ elif menu == "Manutenção de UPMs":
             if not df_b.empty and not df_m.empty:
                 st.write("#### UPM selecionada")
                 st.text_input("Nome/Identificador da UPM", value=dados["UPM"], disabled=True, key="upm_vinc_nome")
-                st.text_area("Descrição da UPM", value=dados.get("Descricao", ""), disabled=True, key="upm_vinc_desc", height=100)
+                st.text_area("Descrição da UPM", value=dados.get("Descricao", ""), disabled=-True, key="upm_vinc_desc", height=100)
 
             if modo == "cadastro":
                 c_s, c_c = st.columns(2)
