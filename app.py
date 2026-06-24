@@ -67,7 +67,7 @@ st.sidebar.subheader("Menu Principal")
 
 menu = st.sidebar.radio(
     "Selecione uma opção:",
-    ["Manutenção de Município", "Manutenção de Bairro", "Manutenção de UPMs", "Importação de Arquivo de Dados", "Carga e Configurações"],
+    ["Manutenção de Município", "Manutenção de Bairro", "Manutenção de UPMs", "Importação de Arquivo de Dados", "Extração de PDFs (BO)", "Carga e Configurações"],
     label_visibility="collapsed"
 )
 
@@ -965,6 +965,101 @@ elif menu == "Importação de Arquivo de Dados":
             st.error(f"⚠️ Erro ao ler ou processar o arquivo: {str(e)}")
     else:
         st.info("💡 Dica: Prepare uma planilha contendo as colunas 'Bairro' e 'Municipio' para cruzar com o banco de dados do sistema.")
+
+# =====================================================================
+# 4.5. TELA: EXTRAÇÃO DE PDFs (BO)
+# =====================================================================
+elif menu == "Extração de PDFs (BO)":
+    st.title("📥 Extração de Dados de BOs (PDF)")
+    st.write("Faça o upload de um ou mais arquivos PDF de Boletins de Ocorrência para extrair dados automaticamente por seções e exportar o resultado para Excel.")
+
+    uploaded_files = st.file_uploader("Escolha os arquivos PDF dos BOs", type=["pdf"], accept_multiple_files=True, key="bo_pdf_uploader")
+
+    if uploaded_files:
+        if st.button("🚀 Processar BOs Selecionados", type="primary", width="stretch", key="btn_processar_bo_pdfs"):
+            try:
+                import pypdf
+                import extrair_bo as ex_bo
+                
+                # Inicializa ou garante que o banco está pronto
+                db.inicializar_banco()
+                
+                # Carrega os mapeamentos e listas de bairros/municípios
+                db_mappings = {
+                    "mapa_upms": db.obter_mapeamento_upms(),
+                    "mapa_nomes_mun": db.obter_mapeamento_nomes_municipios(),
+                    "mapa_nomes_bai": db.obter_mapeamento_nomes_bairros(),
+                    "mapa_alternativos_bai": db.obter_mapeamento_alternativo_bairros(),
+                    "mapa_mun_todos": db.obter_municipios_com_bairro_todos_unico()
+                }
+                
+                lista_municipios, bairros_por_mun = ex_bo.carregar_dados_banco()
+                
+                resultados = []
+                progresso = st.progress(0)
+                status_text = st.empty()
+                
+                total_arquivos = len(uploaded_files)
+                for idx, uploaded_file in enumerate(uploaded_files):
+                    status_text.write(f"Processando arquivo {idx+1} de {total_arquivos}: **{uploaded_file.name}**...")
+                    
+                    texto = ""
+                    try:
+                        texto = ex_bo.extrair_texto_pdf(uploaded_file)
+                    except Exception as e:
+                        texto = ""
+                        st.error(f"Erro ao ler {uploaded_file.name}: {str(e)}")
+                        
+                    if not texto:
+                        res = {
+                            "ARQUIVO": uploaded_file.name,
+                            "BO_NUMERO": "Erro na leitura",
+                            "NARRATIVA": "Erro ao extrair texto do arquivo PDF.",
+                            "PROVIDENCIAS": "NI"
+                        }
+                    else:
+                        # Processa usando a lógica unificada do script extrair_bo
+                        res = ex_bo.processar_texto_bo(
+                            texto, 
+                            uploaded_file.name, 
+                            db_mappings, 
+                            lista_municipios, 
+                            bairros_por_mun
+                        )
+                    resultados.append(res)
+                    progresso.progress((idx + 1) / total_arquivos)
+                
+                status_text.empty()
+                st.success(f"🎉 Extração concluída! {len(resultados)} arquivos processados com sucesso.")
+                
+                df_res = pd.DataFrame(resultados)
+                # Ordena as colunas usando a regra unificada centralizada no script
+                df_res = ex_bo.ordenar_dataframe(df_res)
+                
+                # Ajusta o índice para iniciar em 1 para exibição amigável
+                df_res.index = df_res.index + 1
+                
+                st.subheader("Prévia dos BOs Extraídos")
+                st.dataframe(df_res, width="stretch")
+                
+                # Gera o buffer do Excel para download
+                import io
+                buffer_pdf_xlsx = io.BytesIO()
+                with pd.ExcelWriter(buffer_pdf_xlsx, engine='openpyxl') as writer:
+                    df_res.to_excel(writer, index=False, sheet_name='BOs_Extraidos')
+                    
+                nome_xlsx = f"BOs_Processados_{datetime.today().strftime('%d-%m-%Y')}.xlsx"
+                
+                st.download_button(
+                    label="📥 Baixar Planilha de BOs (.xlsx)",
+                    data=buffer_pdf_xlsx.getvalue(),
+                    file_name=nome_xlsx,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch",
+                    key="btn_download_bo_xlsx"
+                )
+            except Exception as e:
+                st.error(f"Erro ao processar os arquivos PDF: {str(e)}")
 
 # =====================================================================
 # 5. TELA: CARGA E CONFIGURAÇÕES
