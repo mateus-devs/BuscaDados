@@ -2,6 +2,51 @@ import sqlite3
 import pandas as pd
 from sqlalchemy import create_engine
 import unicodedata
+import os
+from dotenv import load_dotenv
+from cryptography.fernet import Fernet
+
+load_dotenv()
+
+# Configuração da chave de criptografia Fernet
+SECRET_KEY_PATH = ".env"
+_key = os.getenv("CRYPTO_KEY")
+
+if not _key:
+    _key_bytes = Fernet.generate_key()
+    _key = _key_bytes.decode('utf-8')
+    if not os.path.exists(SECRET_KEY_PATH):
+        with open(SECRET_KEY_PATH, "w", encoding="utf-8") as f:
+            f.write(f"CRYPTO_KEY={_key}\n")
+    else:
+        with open(SECRET_KEY_PATH, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        replaced = False
+        for idx, line in enumerate(lines):
+            if line.startswith("CRYPTO_KEY="):
+                lines[idx] = f"CRYPTO_KEY={_key}\n"
+                replaced = True
+                break
+        if not replaced:
+            lines.append(f"CRYPTO_KEY={_key}\n")
+        with open(SECRET_KEY_PATH, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+    load_dotenv()
+
+cipher = Fernet(_key.encode('utf-8'))
+
+def criptografar_senha(senha: str) -> str:
+    if not senha:
+        return ""
+    return cipher.encrypt(senha.encode('utf-8')).decode('utf-8')
+
+def descriptografar_senha(senha_cripto: str) -> str:
+    if not senha_cripto:
+        return ""
+    try:
+        return cipher.decrypt(senha_cripto.encode('utf-8')).decode('utf-8')
+    except Exception:
+        return "Erro ao descriptografar"
 
 def corrigir_mojibake(texto):
     if not texto:
@@ -111,11 +156,37 @@ def inicializar_banco():
     )
     """)
 
+    # Tabela de Serviços
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS servicos (
+        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        Nome TEXT NOT NULL,
+        UrlLogin TEXT NOT NULL,
+        UrlConsulta TEXT NOT NULL,
+        UrlPdf TEXT NOT NULL,
+        Login TEXT NOT NULL,
+        Senha TEXT NOT NULL,
+        DuplaAutenticacao TEXT NOT NULL DEFAULT 'Não',
+        Tipo TEXT NOT NULL DEFAULT 'SROP',
+        Status TEXT NOT NULL DEFAULT 'Ativo'
+    )
+    """)
+    
     # Se o banco já existir, garanta a coluna Descricao na tabela de UPMs
     cursor.execute("PRAGMA table_info(upms)")
     colunas_upm = [row[1] for row in cursor.fetchall()]
     if "Descricao" not in colunas_upm:
         cursor.execute("ALTER TABLE upms ADD COLUMN Descricao TEXT NOT NULL DEFAULT ''")
+
+    # Garanta as colunas novas na tabela de serviços para bancos já existentes
+    cursor.execute("PRAGMA table_info(servicos)")
+    colunas_ser = [row[1] for row in cursor.fetchall()]
+    if "DuplaAutenticacao" not in colunas_ser:
+        cursor.execute("ALTER TABLE servicos ADD COLUMN DuplaAutenticacao TEXT NOT NULL DEFAULT 'Não'")
+    if "Tipo" not in colunas_ser:
+        cursor.execute("ALTER TABLE servicos ADD COLUMN Tipo TEXT NOT NULL DEFAULT 'SROP'")
+    if "Status" not in colunas_ser:
+        cursor.execute("ALTER TABLE servicos ADD COLUMN Status TEXT NOT NULL DEFAULT 'Ativo'")
     
     # Migra dados antigos de UPMs para a tabela de vínculos (muitos-para-muitos)
     cursor.execute("SELECT COUNT(*) FROM upm_bairros")
@@ -141,32 +212,43 @@ def salvar_registro(tabela: str, dados_dict: dict) -> bool:
     """Insere um novo registro apenas se não for duplicado no banco"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+    dados_salvar = dados_dict.copy()
     
     if tabela == "municipios":
-        municipio = dados_dict["Municipio"].strip()
+        municipio = dados_salvar["Municipio"].strip()
         cursor.execute("SELECT 1 FROM municipios WHERE LOWER(Municipio) = LOWER(?)", (municipio,))
         if cursor.fetchone():
             conn.close()
             return False 
             
     elif tabela == "bairros":
-        bairro = dados_dict["Bairro"].strip()
-        municipio = dados_dict["Municipio"]
+        bairro = dados_salvar["Bairro"].strip()
+        municipio = dados_salvar["Municipio"]
         cursor.execute("SELECT 1 FROM bairros WHERE LOWER(Bairro) = LOWER(?) AND Municipio = ?", (bairro, municipio))
         if cursor.fetchone():
             conn.close()
             return False
 
     elif tabela == "upms":
-        upm = dados_dict["UPM"].strip()
+        upm = dados_salvar["UPM"].strip()
         cursor.execute("SELECT 1 FROM upms WHERE LOWER(UPM) = LOWER(?)", (upm,))
         if cursor.fetchone():
             conn.close()
             return False
             
+    elif tabela == "servicos":
+        nome = dados_salvar["Nome"].strip()
+        cursor.execute("SELECT 1 FROM servicos WHERE LOWER(Nome) = LOWER(?)", (nome,))
+        if cursor.fetchone():
+            conn.close()
+            return False
+        # Criptografa a senha antes de gravar no banco de dados
+        if "Senha" in dados_salvar:
+            dados_salvar["Senha"] = criptografar_senha(dados_salvar["Senha"])
+            
     conn.close()
     
-    df = pd.DataFrame([dados_dict])
+    df = pd.DataFrame([dados_salvar])
     df.to_sql(tabela, engine, if_exists='append', index=False)
     return True
 

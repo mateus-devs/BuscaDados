@@ -48,28 +48,85 @@ st.markdown("""
 
 # --- CONTROLE DE MENSAGENS E ESTADOS ---
 if "mensagem_sucesso" not in st.session_state: st.session_state.mensagem_sucesso = None
+if "menu_override" not in st.session_state: st.session_state.menu_override = None
+if "radio_selecionado" not in st.session_state: st.session_state.radio_selecionado = "Manutenção de Município"
 
 if "sub_tela_mun" not in st.session_state: st.session_state.sub_tela_mun = "listar"
 if "sub_tela_bai" not in st.session_state: st.session_state.sub_tela_bai = "listar"
 if "sub_tela_upm" not in st.session_state: st.session_state.sub_tela_upm = "listar"
+if "sub_tela_ser" not in st.session_state: st.session_state.sub_tela_ser = "listar"
 
 if "modo_form_mun" not in st.session_state: st.session_state.modo_form_mun = "cadastro"
 if "modo_form_bai" not in st.session_state: st.session_state.modo_form_bai = "cadastro"
 if "modo_form_upm" not in st.session_state: st.session_state.modo_form_upm = "cadastro"
+if "modo_form_ser" not in st.session_state: st.session_state.modo_form_ser = "cadastro"
 
 if "dados_sel_mun" not in st.session_state: st.session_state.dados_sel_mun = {"ID": None, "Municipio": "", "Estado": "MT - Mato Grosso"}
 if "dados_sel_bai" not in st.session_state: st.session_state.dados_sel_bai = {"ID": None, "Bairro": "", "Municipio": ""}
 if "dados_sel_upm" not in st.session_state: st.session_state.dados_sel_upm = {"ID": None, "UPM": "", "Descricao": "", "Bairro": "", "Municipio": "", "Estado": ""}
+if "dados_sel_ser" not in st.session_state: st.session_state.dados_sel_ser = {"ID": None, "Nome": "", "UrlLogin": "", "UrlConsulta": "", "UrlPdf": "", "Login": "", "Senha": "", "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo"}
 
 # --- MENU LATERAL ESQUERDO ---
 st.sidebar.title("🤖 BuscaDados")
 st.sidebar.subheader("Menu Principal")
 
-menu = st.sidebar.radio(
+opcoes_menu = ["Manutenção de Município", "Manutenção de Bairro", "Manutenção de UPMs", "Manutenção de Serviços", "Importação de Arquivo de Dados", "Extração de PDFs (BO)", "Carga e Configurações"]
+
+# O index do radio deve ser baseado no que está em st.session_state.radio_selecionado
+idx_radio_atual = opcoes_menu.index(st.session_state.radio_selecionado) if st.session_state.radio_selecionado in opcoes_menu else 0
+
+radio_val = st.sidebar.radio(
     "Selecione uma opção:",
-    ["Manutenção de Município", "Manutenção de Bairro", "Manutenção de UPMs", "Importação de Arquivo de Dados", "Extração de PDFs (BO)", "Carga e Configurações"],
+    opcoes_menu,
+    index=idx_radio_atual,
     label_visibility="collapsed"
 )
+
+# Se o valor retornado pelo radio for diferente do guardado, o usuário clicou ativamente no radio!
+# Nesse caso, removemos o override do serviço e atualizamos a seleção do radio.
+if radio_val != st.session_state.radio_selecionado:
+    st.session_state.radio_selecionado = radio_val
+    st.session_state.menu_override = None
+    st.rerun()
+
+# Definimos a variável final 'menu' a ser usada nas telas
+menu = st.session_state.menu_override if st.session_state.menu_override else radio_val
+
+# --- EXIBIÇÃO DE SERVIÇOS CADASTRADOS NO SIDEBAR ---
+st.sidebar.markdown("<hr style='margin: 15px 0px 15px 0px;'>", unsafe_allow_html=True)
+st.sidebar.subheader("🔌 Serviços Ativos")
+df_servicos_sidebar = db.listar_dados("servicos")
+if not df_servicos_sidebar.empty:
+    # Filtra apenas os serviços ativos para exibição no menu lateral
+    df_servicos_sidebar = df_servicos_sidebar[df_servicos_sidebar.get("Status", "Ativo") == "Ativo"]
+    if not df_servicos_sidebar.empty:
+        for idx, row in df_servicos_sidebar.iterrows():
+            id_servico = row["ID"]
+            nome_servico = row["Nome"]
+            is_ativo = (st.session_state.menu_override == f"servico_{id_servico}")
+            
+            btn_label = f"🎯 {nome_servico} (Ativo)" if is_ativo else f"🔹 {nome_servico}"
+            
+            if st.sidebar.button(btn_label, key=f"btn_sid_{id_servico}", width="stretch"):
+                st.session_state.menu_override = f"servico_{id_servico}"
+                st.rerun()
+    else:
+        st.sidebar.info("Nenhum serviço ativo cadastrado.")
+else:
+    st.sidebar.info("Nenhum serviço cadastrado.")
+
+# Se um serviço estiver ativo via override, vamos injetar CSS para desmarcar visualmente o radio button
+if st.session_state.menu_override:
+    st.markdown("""
+        <style>
+            div[data-testid="stSidebarUserContent"] div[role="radiogroup"] label[data-checked="true"] {
+                background-color: #f8f9fa !important;
+                border-color: #e9ecef !important;
+                color: inherit !important;
+                font-weight: normal !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
 
 # =====================================================================
 # 1. TELA: MANUTENÇÃO DE MUNICÍPIO (COMPLETA)
@@ -716,6 +773,182 @@ elif menu == "Manutenção de UPMs":
                 st.session_state.sub_tela_upm = "listar"; st.rerun()
 
 # =====================================================================
+# 3.5. TELA: MANUTENÇÃO DE SERVIÇOS (COMPLETA)
+# =====================================================================
+elif menu == "Manutenção de Serviços":
+    st.title("🔌 Manutenção de Serviços")
+    
+    if st.session_state.mensagem_sucesso:
+        st.success(st.session_state.mensagem_sucesso)
+        st.session_state.mensagem_sucesso = None
+        
+    if st.session_state.sub_tela_ser == "listar":
+        if st.button("➕ Cadastrar Novo Serviço", width="stretch"):
+            st.session_state.sub_tela_ser = "formulario"
+            st.session_state.modo_form_ser = "cadastro"
+            st.session_state.dados_sel_ser = {
+                "ID": None, "Nome": "", "UrlLogin": "", "UrlConsulta": "", "UrlPdf": "", "Login": "", "Senha": "",
+                "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo"
+            }
+            st.rerun()
+            
+        st.write("")
+        df_ser = db.listar_dados("servicos")
+        
+        if df_ser.empty:
+            st.info("Nenhum serviço cadastrado no banco de dados ainda.")
+        else:
+            st.subheader("Serviços Cadastrados")
+            col_id, col_nome, col_status, col_acoes = st.columns([0.8, 3, 2, 4.2])
+            with col_id: st.write("**ID**")
+            with col_nome: st.write("**Nome do Serviço**")
+            with col_status: st.write("**Situação**")
+            with col_acoes: st.write("**Ações Disponíveis**")
+            st.markdown("<hr style='margin: 0px 0px 10px 0px; border-color: #f0f2f6;'>", unsafe_allow_html=True)
+            
+            for idx, row in df_ser.iterrows():
+                id_atual = row["ID"]
+                nome_atual = row["Nome"]
+                login_atual = row["Login"]
+                url_login = row["UrlLogin"]
+                url_consulta = row["UrlConsulta"]
+                url_pdf = row["UrlPdf"]
+                senha_cripto = row["Senha"]
+                dupla_autenticacao = row.get("DuplaAutenticacao", "Não")
+                tipo_servico = row.get("Tipo", "SROP")
+                status_servico = row.get("Status", "Ativo")
+                
+                c_id, c_nome, c_status, c_vis, c_edt, c_exc = st.columns([0.8, 3, 2, 1.2, 1.2, 1.8])
+                c_id.write(f"`{id_atual}`")
+                c_nome.write(nome_atual)
+                
+                # Renderiza status com um badge de cor correspondente
+                if status_servico == "Ativo":
+                    c_status.markdown("🟢 **Ativo**")
+                else:
+                    c_status.markdown("🔴 **Inativo**")
+                
+                if c_vis.button("👁️ Ver", key=f"vis_ser_{id_atual}", width="stretch"):
+                    st.session_state.sub_tela_ser = "formulario"
+                    st.session_state.modo_form_ser = "visualizar"
+                    st.session_state.dados_sel_ser = {
+                        "ID": id_atual, "Nome": nome_atual, "UrlLogin": url_login,
+                        "UrlConsulta": url_consulta, "UrlPdf": url_pdf, "Login": login_atual,
+                        "Senha": db.descriptografar_senha(senha_cripto),
+                        "DuplaAutenticacao": dupla_autenticacao,
+                        "Tipo": tipo_servico, "Status": status_servico
+                    }
+                    st.rerun()
+                    
+                if c_edt.button("✏️ Editar", key=f"edt_ser_{id_atual}", width="stretch"):
+                    st.session_state.sub_tela_ser = "formulario"
+                    st.session_state.modo_form_ser = "editar"
+                    st.session_state.dados_sel_ser = {
+                        "ID": id_atual, "Nome": nome_atual, "UrlLogin": url_login,
+                        "UrlConsulta": url_consulta, "UrlPdf": url_pdf, "Login": login_atual,
+                        "Senha": db.descriptografar_senha(senha_cripto),
+                        "DuplaAutenticacao": dupla_autenticacao,
+                        "Tipo": tipo_servico, "Status": status_servico
+                    }
+                    st.rerun()
+                    
+                if c_exc.button("🗑️ Excluir", key=f"exc_ser_{id_atual}", width="stretch", type="primary"):
+                    st.session_state.sub_tela_ser = "formulario"
+                    st.session_state.modo_form_ser = "excluir"
+                    st.session_state.dados_sel_ser = {
+                        "ID": id_atual, "Nome": nome_atual, "UrlLogin": url_login,
+                        "UrlConsulta": url_consulta, "UrlPdf": url_pdf, "Login": login_atual,
+                        "Senha": db.descriptografar_senha(senha_cripto),
+                        "DuplaAutenticacao": dupla_autenticacao,
+                        "Tipo": tipo_servico, "Status": status_servico
+                    }
+                    st.rerun()
+
+    elif st.session_state.sub_tela_ser == "formulario":
+        modo = st.session_state.modo_form_ser
+        dados = st.session_state.dados_sel_ser
+        campos_bloqueados = True if modo in ["visualizar", "excluir"] else False
+        
+        if modo == "cadastro": st.subheader("➕ Cadastrar Novo Serviço")
+        elif modo == "visualizar": st.subheader(f"👁️ Visualizando Registro ID: {dados['ID']}")
+        elif modo == "editar": st.subheader(f"✏️ Editando Registro ID: {dados['ID']}")
+        elif modo == "excluir":
+            st.subheader(f"⚠️ Confirmar Exclusão do Registro ID: {dados['ID']}")
+            st.error(f"Atenção: Você está prestes a deletar o serviço '{dados['Nome']}'. Esta ação não pode ser desfeita.")
+
+        novo_nome = st.text_input("Nome do Serviço", value=dados["Nome"], disabled=campos_bloqueados, key="input_ser_nome").strip()
+        nova_url_login = st.text_input("Endereço da Tela de Login", value=dados["UrlLogin"], disabled=campos_bloqueados, key="input_ser_urllogin").strip()
+        nova_url_consulta = st.text_input("Endereço da Tela de Consulta", value=dados["UrlConsulta"], disabled=campos_bloqueados, key="input_ser_urlconsulta").strip()
+        nova_url_pdf = st.text_input("Endereço de Extração do PDF", value=dados["UrlPdf"], disabled=campos_bloqueados, key="input_ser_urlpdf").strip()
+        novo_login = st.text_input("Login", value=dados["Login"], disabled=campos_bloqueados, key="input_ser_login").strip()
+        nova_senha = st.text_input("Senha", value=dados["Senha"], type="password", disabled=campos_bloqueados, key="input_ser_senha").strip()
+        
+        lista_dupla = ["Não", "Sim"]
+        idx_dupla = lista_dupla.index(dados["DuplaAutenticacao"]) if dados.get("DuplaAutenticacao") in lista_dupla else 0
+        nova_dupla = st.selectbox("Dupla Autenticação", lista_dupla, index=idx_dupla, disabled=campos_bloqueados, key="input_ser_dupla")
+        
+        lista_tipo = ["SROP"]
+        idx_tipo = lista_tipo.index(dados["Tipo"]) if dados.get("Tipo") in lista_tipo else 0
+        novo_tipo = st.selectbox("Tipo", lista_tipo, index=idx_tipo, disabled=campos_bloqueados, key="input_ser_tipo")
+        
+        lista_status = ["Ativo", "Inativo"]
+        idx_status = lista_status.index(dados["Status"]) if dados.get("Status") in lista_status else 0
+        novo_status = st.selectbox("Situação", lista_status, index=idx_status, disabled=campos_bloqueados, key="input_ser_status")
+        
+        st.write("")
+        if modo == "cadastro":
+            c_salvar, c_cancelar = st.columns(2)
+            if c_salvar.button("💾 Salvar no Banco", key="btn_salvar_ser", width="stretch"):
+                if novo_nome and nova_url_login and nova_url_consulta and nova_url_pdf:
+                    sucesso = db.salvar_registro("servicos", {
+                        "Nome": novo_nome, "UrlLogin": nova_url_login, "UrlConsulta": nova_url_consulta,
+                        "UrlPdf": nova_url_pdf, "Login": novo_login, "Senha": nova_senha,
+                        "DuplaAutenticacao": nova_dupla, "Tipo": novo_tipo, "Status": novo_status
+                    })
+                    if sucesso:
+                        st.session_state.sub_tela_ser = "listar"
+                        st.session_state.mensagem_sucesso = f"🎉 Serviço '{novo_nome}' cadastrado com sucesso!"
+                        st.rerun()
+                    else: st.error(f"⚠️ Erro: O serviço '{novo_nome}' já existe!")
+                else: st.error("Por favor, preencha todos os campos obrigatórios do formulário (Nome, Login URL, Consulta URL e PDF URL).")
+            if c_cancelar.button("❌ Cancelar e Voltar", key="btn_cancelar_cad_ser", width="stretch"):
+                st.session_state.sub_tela_ser = "listar"; st.rerun()
+                    
+        elif modo == "visualizar":
+            if st.button("⬅️ Voltar para a Consulta", key="btn_voltar_vis_ser", width="stretch"):
+                st.session_state.sub_tela_ser = "listar"; st.rerun()
+                
+        elif modo == "editar":
+            c_atualizar, c_cancelar = st.columns(2)
+            if c_atualizar.button("💾 Salvar Alterações", key="btn_update_ser", width="stretch"):
+                if novo_nome and nova_url_login and nova_url_consulta and nova_url_pdf:
+                    conn = sqlite3.connect("buscadados.db")
+                    cursor = conn.cursor()
+                    senha_criptografada = db.criptografar_senha(nova_senha)
+                    cursor.execute(
+                        "UPDATE servicos SET Nome = ?, UrlLogin = ?, UrlConsulta = ?, UrlPdf = ?, Login = ?, Senha = ?, DuplaAutenticacao = ?, Tipo = ?, Status = ? WHERE ID = ?",
+                        (novo_nome, nova_url_login, nova_url_consulta, nova_url_pdf, novo_login, senha_criptografada, nova_dupla, novo_tipo, novo_status, dados["ID"])
+                    )
+                    conn.commit()
+                    conn.close()
+                    st.session_state.sub_tela_ser = "listar"
+                    st.session_state.mensagem_sucesso = "✏️ Serviço alterado com sucesso!"
+                    st.rerun()
+                else: st.error("Por favor, preencha todos os campos obrigatórios do formulário (Nome, Login URL, Consulta URL e PDF URL).")
+            if c_cancelar.button("❌ Cancelar", key="btn_cancelar_edit_ser", width="stretch"):
+                st.session_state.sub_tela_ser = "listar"; st.rerun()
+                
+        elif modo == "excluir":
+            c_deletar, c_voltar = st.columns(2)
+            if c_deletar.button("🗑️ Sim, Excluir Registro", key="btn_delete_confirm_ser", width="stretch"):
+                db.excluir_registro("servicos", dados["ID"])
+                st.session_state.sub_tela_ser = "listar"
+                st.session_state.mensagem_sucesso = f"🗑️ Serviço '{dados['Nome']}' removido!"
+                st.rerun()
+            if c_voltar.button("❌ Cancelar e Manter", key="btn_voltar_del_ser", width="stretch"):
+                st.session_state.sub_tela_ser = "listar"; st.rerun()
+
+# =====================================================================
 # 4. TELA: IMPORTAÇÃO DE ARQUIVO DE DADOS
 # =====================================================================
 elif menu == "Importação de Arquivo de Dados":
@@ -1152,3 +1385,104 @@ elif menu == "Carga e Configurações":
                 st.balloons()
             except Exception as e:
                 st.error(f"Erro ao limpar banco de dados: {str(e)}")
+
+# =====================================================================
+# 6. TELA DE EXECUÇÃO DINÂMICA DE SERVIÇOS
+# =====================================================================
+elif menu.startswith("servico_"):
+    # Extrai o ID do serviço
+    id_servico = int(menu.replace("servico_", ""))
+    
+    # Busca detalhes do serviço no banco
+    conn = sqlite3.connect("buscadados.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status FROM servicos WHERE ID = ?", (id_servico,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        st.error("⚠️ Serviço não encontrado.")
+    else:
+        nome, url_login, url_consulta, url_pdf, login_db, senha_db_cripto, dupla_autenticacao, tipo, status_db = row
+        
+        if status_db == "Inativo":
+            st.error("⚠️ Este serviço está inativo no momento. Ative-o na tela de Manutenção de Serviços para poder executá-lo.")
+            if st.button("⬅️ Voltar para Manutenção de Serviços", key="btn_voltar_inativo", width="stretch"):
+                st.session_state.menu_override = None
+                st.session_state.radio_selecionado = "Manutenção de Serviços"
+                st.rerun()
+            st.stop()
+        
+        st.title(f"🔌 Execução de Serviço: {nome}")
+        st.write(f"Tipo de Serviço: **{tipo}**")
+        
+        # Só desenvolvemos o tipo SROP por enquanto
+        if tipo != "SROP":
+            st.warning(f"A integração para o tipo de serviço '{tipo}' não está implementada ainda. Apenas o tipo 'SROP' é suportado atualmente.")
+        else:
+            # Descriptografa a senha para usar ou exibir
+            senha_db = db.descriptografar_senha(senha_db_cripto)
+            
+            # Layout de colunas para o formulário
+            st.markdown("### 🔑 Credenciais e Parâmetros")
+            
+            # Se Login e Senha estiverem preenchidos no banco de dados, não exibe na tela
+            has_credentials = bool(login_db.strip() and senha_db.strip())
+            
+            if has_credentials:
+                st.info("💡 As credenciais de acesso (Usuário e Senha) já estão pré-configuradas no banco de dados para este serviço e serão utilizadas automaticamente.")
+                usuario_exec = login_db.strip()
+                senha_exec = senha_db.strip()
+            else:
+                st.warning("⚠️ Este serviço não possui Usuário e Senha pré-configurados no banco. Por favor, insira-os abaixo para executar o login.")
+                col_user, col_pass = st.columns(2)
+                with col_user:
+                    usuario_exec = st.text_input("Usuário / Login", value="", key=f"exec_user_{id_servico}").strip()
+                with col_pass:
+                    senha_exec = st.text_input("Senha", value="", type="password", key=f"exec_pass_{id_servico}").strip()
+            
+            # Contêiner para MFA e Datas
+            col_mfa, col_data_ini, col_data_fim = st.columns(3)
+            
+            codigo_mfa = ""
+            with col_mfa:
+                if dupla_autenticacao == "Sim":
+                    codigo_mfa = st.text_input("Código do Autenticador (MFA)", value="", placeholder="Ex: 123456", key=f"exec_mfa_{id_servico}").strip()
+                else:
+                    st.text_input("Código do Autenticador (MFA)", value="Não requerido para este serviço", disabled=True, key=f"exec_mfa_disabled_{id_servico}")
+                    
+            from datetime import timedelta
+            ontem = datetime.today() - timedelta(days=1)
+            
+            with col_data_ini:
+                data_inicial = st.date_input("Data Inicial do Registro", value=ontem, key=f"exec_dt_ini_{id_servico}")
+            with col_data_fim:
+                data_final = st.date_input("Data Final do Registro", value=ontem, key=f"exec_dt_fim_{id_servico}")
+                
+            st.write("")
+            
+            # Botão de execução
+            if st.button("🚀 Iniciar Consulta e Integração", type="primary", width="stretch", key=f"btn_exec_ser_{id_servico}"):
+                if not usuario_exec or not senha_exec:
+                    st.error("⚠️ Erro: Usuário e Senha são necessários para realizar o acesso ao serviço.")
+                elif dupla_autenticacao == "Sim" and not codigo_mfa:
+                    st.error("⚠️ Erro: A dupla autenticação está ativada. Por favor, preencha o Código do Autenticador (MFA).")
+                else:
+                    with st.status("Simulando execução do login e consulta...", expanded=True) as status:
+                        status.update(label="Iniciando fluxo de login...", state="running")
+                        st.write(f"🔗 Conectando ao endereço de login: `{url_login}`...")
+                        st.write("Enviando credenciais de acesso...")
+                        
+                        if dupla_autenticacao == "Sim":
+                            st.write(f"🔑 Aplicando Código do Autenticador (MFA): `{codigo_mfa}`...")
+                            
+                        st.write("✅ Sessão iniciada com sucesso!")
+                        
+                        status.update(label="Acessando tela de consulta...", state="running")
+                        st.write(f"🔗 Acessando endereço de consulta: `{url_consulta}`...")
+                        st.write(f"📅 Aplicando filtros de data: de `{data_inicial.strftime('%d/%m/%Y')}` até `{data_final.strftime('%d/%m/%Y')}`...")
+                        
+                        # Simulação concluída
+                        status.update(label="Consulta SROP concluída com sucesso!", state="complete")
+                        
+                    st.success("🎉 Integração e consulta simuladas com sucesso! Esta parte do fluxo está pronta. Aguardando novos detalhes da rotina de raspagem/leitura dos dados.")
