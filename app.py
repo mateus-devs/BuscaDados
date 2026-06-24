@@ -67,7 +67,7 @@ st.sidebar.subheader("Menu Principal")
 
 menu = st.sidebar.radio(
     "Selecione uma opção:",
-    ["Manutenção de Município", "Manutenção de Bairro", "Manutenção de UPMs", "Importação de Arquivo de Dados"],
+    ["Manutenção de Município", "Manutenção de Bairro", "Manutenção de UPMs", "Importação de Arquivo de Dados", "Carga e Configurações"],
     label_visibility="collapsed"
 )
 
@@ -839,6 +839,7 @@ elif menu == "Importação de Arquivo de Dados":
                     mapa_nomes_mun = db.obter_mapeamento_nomes_municipios()
                     mapa_nomes_bai = db.obter_mapeamento_nomes_bairros()
                     mapa_alternativos_bai = db.obter_mapeamento_alternativo_bairros()
+                    mapa_mun_todos = db.obter_municipios_com_bairro_todos_unico()
                     
                     lista_upms = []
                     novos_bairros = []
@@ -872,7 +873,14 @@ elif menu == "Importação de Arquivo de Dados":
                         novos_bairros.append(b_oficial)
                         
                         # 5. Determina a UPM correspondente usando a chave de bairro (oficial ou equivalente)
-                        upm_val = mapa_upms.get((b_norm, m_norm), "NI")
+                        upm_val = mapa_upms.get((b_norm, m_norm))
+                        if not upm_val:
+                            # Se não achou Bairro+Municipio, mas o Município possui apenas 'TODOS' cadastrado
+                            if m_norm in mapa_mun_todos:
+                                upm_val = mapa_mun_todos[m_norm]
+                            else:
+                                upm_val = "NI"
+                                
                         lista_upms.append(upm_val)
                             
                     # Atualiza o DataFrame com as strings higienizadas e corretas
@@ -924,13 +932,31 @@ elif menu == "Importação de Arquivo de Dados":
                                     for row in range(2, len(df_upload) + 2):  # +2: header na linha 1
                                         cell = ws[f'{col_letter}{row}']
                                         cell.number_format = 'dd/mm/yyyy'
+                    # Determina o nome do arquivo dinâmico (ROUBO E FURTO data_min A data_max - EXPORT.xlsx)
+                    nome_arquivo = f"ROUBO E FURTO {datetime.today().strftime('%d-%m-%Y')} - EXPORT.xlsx"
+                    col_data_fato = None
+                    for col in df_upload.columns:
+                        # Remove espaços e underlines para a comparação (Ex: "Data Fato" -> "datafato")
+                        col_comparar = db.normalizar_texto(col).replace(" ", "").replace("_", "")
+                        if col_comparar == "datafato":
+                            col_data_fato = col
+                            break
+                    
+                    if col_data_fato:
+                        # Converte para datetime garantindo o padrão brasileiro (dia primeiro)
+                        datas_validas = pd.to_datetime(df_upload[col_data_fato], dayfirst=True, errors='coerce').dropna()
+                        if not datas_validas.empty:
+                            data_min = datas_validas.min().strftime('%d-%m-%Y')
+                            data_max = datas_validas.max().strftime('%d-%m-%Y')
+                            nome_arquivo = f"ROUBO E FURTO {data_min} A {data_max} - EXPORT.xlsx"
+                            
                     processed_data = buffer.getvalue()
                     
                     st.write("")
                     st.download_button(
                         label="📥 Baixar Planilha com Coluna UPM (.xlsx)",
                         data=processed_data,
-                        file_name="planilha_com_upms.xlsx",
+                        file_name=nome_arquivo,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         width="stretch"
                     )
@@ -939,3 +965,95 @@ elif menu == "Importação de Arquivo de Dados":
             st.error(f"⚠️ Erro ao ler ou processar o arquivo: {str(e)}")
     else:
         st.info("💡 Dica: Prepare uma planilha contendo as colunas 'Bairro' e 'Municipio' para cruzar com o banco de dados do sistema.")
+
+# =====================================================================
+# 5. TELA: CARGA E CONFIGURAÇÕES
+# =====================================================================
+elif menu == "Carga e Configurações":
+    st.title("⚙️ Carga e Configurações")
+    
+    st.write("Gerencie a base de dados do sistema, baixe o arquivo de modelo para preenchimento, realize cargas em lote ou limpe o banco de dados completamente.")
+    
+    tab_carga, tab_limpeza = st.tabs(["📥 Carga Geral de Dados", "⚠️ Redefinir Banco"])
+    
+    with tab_carga:
+        st.subheader("1. Baixar Arquivo de Modelo")
+        st.write("Baixe a planilha modelo contendo a estrutura correta para importar seus dados. Preencha as abas conforme necessário.")
+        
+        # Cria o modelo Excel em memória para download
+        import io
+        buffer_model = io.BytesIO()
+        with pd.ExcelWriter(buffer_model, engine='openpyxl') as writer:
+            pd.DataFrame(columns=["Municipio", "Estado"]).to_excel(writer, index=False, sheet_name="Municipios")
+            pd.DataFrame(columns=["Bairro", "Municipio"]).to_excel(writer, index=False, sheet_name="Bairros")
+            pd.DataFrame(columns=["Bairro_Oficial", "Municipio", "Nome_Alternativo"]).to_excel(writer, index=False, sheet_name="Nomes Alternativos")
+            pd.DataFrame(columns=["UPM", "Descricao", "Bairro", "Municipio", "Estado"]).to_excel(writer, index=False, sheet_name="UPMs")
+        processed_model = buffer_model.getvalue()
+        
+        st.download_button(
+            label="📥 Baixar Modelo de Importação (.xlsx)",
+            data=processed_model,
+            file_name="modelo_carga_buscadados.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+        st.markdown("---")
+        
+        st.subheader("2. Enviar Arquivo Preenchido")
+        arquivo_carga = st.file_uploader("Escolha o arquivo Excel (.xlsx) preenchido", type=["xlsx"], key="file_carga_geral")
+        
+        if arquivo_carga is not None:
+            if st.button("🚀 Processar Carga em Lote", type="primary", width="stretch"):
+                try:
+                    with st.spinner("Processando importação..."):
+                        xls = pd.ExcelFile(arquivo_carga)
+                        abas = xls.sheet_names
+                        
+                        # Validação inicial de abas
+                        required_sheets = ["Municipios", "Bairros", "Nomes Alternativos", "UPMs"]
+                        missing = [s for s in required_sheets if s not in abas]
+                        
+                        if missing:
+                            st.error(f"Erro: O arquivo de carga deve conter as abas: {', '.join(required_sheets)}. Abas ausentes no arquivo: {', '.join(missing)}")
+                        else:
+                            # Carrega os DataFrames
+                            df_mun = pd.read_excel(xls, sheet_name="Municipios")
+                            df_bai = pd.read_excel(xls, sheet_name="Bairros")
+                            df_alt = pd.read_excel(xls, sheet_name="Nomes Alternativos")
+                            df_upm = pd.read_excel(xls, sheet_name="UPMs")
+                            
+                            # Executa as cargas na ordem correta
+                            res_mun = db.importar_municipios_lote(df_mun)
+                            res_bai = db.importar_bairros_lote(df_bai)
+                            res_alt = db.importar_nomes_alternativos_lote(df_alt)
+                            res_upm = db.importar_upms_lote(df_upm)
+                            
+                            st.success("🎉 Carga de dados realizada com sucesso!")
+                            
+                            # Exibe o resultado de forma visualmente rica
+                            st.markdown("### Resumo da Carga")
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Municípios", f"+{res_mun['inseridos']}", f"Ignorados: {res_mun['pulados']} | Erros: {res_mun['erros']}")
+                            with col2:
+                                st.metric("Bairros", f"+{res_bai['inseridos']}", f"Ignorados: {res_bai['pulados']} | Erros: {res_bai['erros']}")
+                            with col3:
+                                st.metric("Nomes Alternativos", f"+{res_alt['inseridos']}", f"Ignorados: {res_alt['pulados']} | Erros: {res_alt['erros']}")
+                            with col4:
+                                st.metric("UPMs Mapeadas", f"+{res_upm['inseridos']}", f"Ignorados: {res_upm['pulados']} | Erros: {res_upm['erros']}")
+                except Exception as e:
+                    st.error(f"⚠️ Erro ao processar arquivo: {str(e)}")
+                    
+    with tab_limpeza:
+        st.subheader("🚨 Excluir Todos os Dados do Sistema")
+        st.error("ATENÇÃO: Esta operação é irreversível e irá deletar TODOS os municípios, bairros, nomes alternativos, UPMs e vínculos cadastrados no banco de dados!")
+        
+        confirmacao = st.checkbox("Estou ciente e desejo apagar PERMANENTEMENTE todos os dados cadastrados.", key="confirmacao_reset_db")
+        
+        if st.button("🔴 Apagar Todos os Dados", disabled=not confirmacao, type="primary", width="stretch"):
+            try:
+                db.limpar_banco_dados()
+                st.success("🔥 Todos os dados foram excluídos com sucesso. O banco de dados foi reiniciado.")
+                st.balloons()
+            except Exception as e:
+                st.error(f"Erro ao limpar banco de dados: {str(e)}")
