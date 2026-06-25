@@ -64,7 +64,7 @@ if "modo_form_ser" not in st.session_state: st.session_state.modo_form_ser = "ca
 if "dados_sel_mun" not in st.session_state: st.session_state.dados_sel_mun = {"ID": None, "Municipio": "", "Estado": "MT - Mato Grosso"}
 if "dados_sel_bai" not in st.session_state: st.session_state.dados_sel_bai = {"ID": None, "Bairro": "", "Municipio": ""}
 if "dados_sel_upm" not in st.session_state: st.session_state.dados_sel_upm = {"ID": None, "UPM": "", "Descricao": "", "Bairro": "", "Municipio": "", "Estado": ""}
-if "dados_sel_ser" not in st.session_state: st.session_state.dados_sel_ser = {"ID": None, "Nome": "", "UrlLogin": "", "UrlConsulta": "", "UrlPdf": "", "Login": "", "Senha": "", "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo"}
+if "dados_sel_ser" not in st.session_state: st.session_state.dados_sel_ser = {"ID": None, "Nome": "", "UrlLogin": "", "UrlConsulta": "", "UrlPdf": "", "Login": "", "Senha": "", "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo", "Tempo_Expiracao_Horas": 4}
 
 # --- MENU LATERAL ESQUERDO ---
 st.sidebar.title("🤖 BuscaDados")
@@ -822,6 +822,7 @@ elif menu == "Manutenção de Serviços":
                 dupla_autenticacao = row.get("DuplaAutenticacao", "Não")
                 tipo_servico = row.get("Tipo", "SROP")
                 status_servico = row.get("Status", "Ativo")
+                tempo_expiracao = row.get("Tempo_Expiracao_Horas", 4)
                 
                 c_id, c_nome, c_status, c_vis, c_edt, c_exc = st.columns([0.8, 3, 2, 1.2, 1.2, 1.8])
                 c_id.write(f"`{id_atual}`")
@@ -841,7 +842,8 @@ elif menu == "Manutenção de Serviços":
                         "UrlConsulta": url_consulta, "UrlPdf": url_pdf, "Login": login_atual,
                         "Senha": db.descriptografar_senha(senha_cripto),
                         "DuplaAutenticacao": dupla_autenticacao,
-                        "Tipo": tipo_servico, "Status": status_servico
+                        "Tipo": tipo_servico, "Status": status_servico,
+                        "Tempo_Expiracao_Horas": tempo_expiracao
                     }
                     st.rerun()
                     
@@ -853,7 +855,8 @@ elif menu == "Manutenção de Serviços":
                         "UrlConsulta": url_consulta, "UrlPdf": url_pdf, "Login": login_atual,
                         "Senha": db.descriptografar_senha(senha_cripto),
                         "DuplaAutenticacao": dupla_autenticacao,
-                        "Tipo": tipo_servico, "Status": status_servico
+                        "Tipo": tipo_servico, "Status": status_servico,
+                        "Tempo_Expiracao_Horas": tempo_expiracao
                     }
                     st.rerun()
                     
@@ -865,7 +868,8 @@ elif menu == "Manutenção de Serviços":
                         "UrlConsulta": url_consulta, "UrlPdf": url_pdf, "Login": login_atual,
                         "Senha": db.descriptografar_senha(senha_cripto),
                         "DuplaAutenticacao": dupla_autenticacao,
-                        "Tipo": tipo_servico, "Status": status_servico
+                        "Tipo": tipo_servico, "Status": status_servico,
+                        "Tempo_Expiracao_Horas": tempo_expiracao
                     }
                     st.rerun()
 
@@ -901,6 +905,9 @@ elif menu == "Manutenção de Serviços":
         novo_status = st.selectbox("Situação", lista_status, index=idx_status, disabled=campos_bloqueados, key="input_ser_status")
         
         st.write("")
+        novo_tempo_expiracao = st.number_input("Tempo Máximo de Sessão (Horas)", min_value=1, max_value=24, value=dados.get("Tempo_Expiracao_Horas", 4), disabled=campos_bloqueados, key="input_ser_tempo")
+        
+        st.write("")
         if modo == "cadastro":
             c_salvar, c_cancelar = st.columns(2)
             if c_salvar.button("💾 Salvar no Banco", key="btn_salvar_ser", width="stretch"):
@@ -908,7 +915,8 @@ elif menu == "Manutenção de Serviços":
                     sucesso = db.salvar_registro("servicos", {
                         "Nome": novo_nome, "UrlLogin": nova_url_login, "UrlConsulta": nova_url_consulta,
                         "UrlPdf": nova_url_pdf, "Login": novo_login, "Senha": nova_senha,
-                        "DuplaAutenticacao": nova_dupla, "Tipo": novo_tipo, "Status": novo_status
+                        "DuplaAutenticacao": nova_dupla, "Tipo": novo_tipo, "Status": novo_status,
+                        "Tempo_Expiracao_Horas": novo_tempo_expiracao
                     })
                     if sucesso:
                         st.session_state.sub_tela_ser = "listar"
@@ -931,8 +939,8 @@ elif menu == "Manutenção de Serviços":
                     cursor = conn.cursor()
                     senha_criptografada = db.criptografar_senha(nova_senha)
                     cursor.execute(
-                        "UPDATE servicos SET Nome = ?, UrlLogin = ?, UrlConsulta = ?, UrlPdf = ?, Login = ?, Senha = ?, DuplaAutenticacao = ?, Tipo = ?, Status = ? WHERE ID = ?",
-                        (novo_nome, nova_url_login, nova_url_consulta, nova_url_pdf, novo_login, senha_criptografada, nova_dupla, novo_tipo, novo_status, dados["ID"])
+                        "UPDATE servicos SET Nome = ?, UrlLogin = ?, UrlConsulta = ?, UrlPdf = ?, Login = ?, Senha = ?, DuplaAutenticacao = ?, Tipo = ?, Status = ?, Tempo_Expiracao_Horas = ? WHERE ID = ?",
+                        (novo_nome, nova_url_login, nova_url_consulta, nova_url_pdf, novo_login, senha_criptografada, nova_dupla, novo_tipo, novo_status, novo_tempo_expiracao, dados["ID"])
                     )
                     conn.commit()
                     conn.close()
@@ -1012,7 +1020,7 @@ elif menu == "Manutenção de Serviços":
                     status_lbl = f"<span style='color: #6c757d;'>{status_sessao.upper()}</span>"
                 
                 with st.container():
-                    col_status, col_servico, col_logado, col_tempo, col_btn = st.columns([1.5, 2.5, 2.5, 1.5, 2])
+                    col_status, col_servico, col_logado, col_tempo, col_btn = st.columns([1.0, 2.0, 2.5, 1.5, 3.0])
                     
                     with col_status:
                         st.markdown(f"<div style='padding-top: 5px; font-size: 12px; color: #6c757d; text-transform: uppercase;'>Status</div><div style='padding-top: 2px; font-size: 15px;'><b>{icon} {status_lbl}</b></div>", unsafe_allow_html=True)
@@ -1026,7 +1034,31 @@ elif menu == "Manutenção de Serviços":
                     with col_btn:
                         st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
                         if status_sessao == "Ativa":
-                            if st.button("🔴 Encerrar", key=f"btn_kill_sess_{id_sessao_db}", use_container_width=True):
+                            cb_test, cb_kill = st.columns(2)
+                            if cb_test.button("🔄 Testar", key=f"btn_test_sess_{id_sessao_db}", use_container_width=True):
+                                with st.spinner("Ping..."):
+                                    import automacao as aut
+                                    import json
+                                    
+                                    # Pega URL de Consulta do serviço
+                                    df_ser_url = db.listar_dados("servicos")
+                                    url_consulta = df_ser_url[df_ser_url["ID"] == id_ser]["UrlConsulta"].iloc[0] if not df_ser_url.empty else ""
+                                    
+                                    # Pega os cookies
+                                    sess_data_str = db.descriptografar_senha(row['Session_Data'])
+                                    if sess_data_str != "Erro ao descriptografar":
+                                        sess_obj = json.loads(sess_data_str)
+                                        is_alive = aut.testar_conexao_srop(sess_obj, url_consulta)
+                                        if is_alive:
+                                            st.toast("✅ A sessão respondeu e está perfeitamente viva no SROP!", icon="✅")
+                                        else:
+                                            db.atualizar_status_sessao(id_sessao_db, "Expirada (Remota)")
+                                            st.error("❌ Sessão morreu lá no servidor. Atualizando a grade...")
+                                            st.rerun()
+                                    else:
+                                        st.error("Erro de descriptografia")
+                                        
+                            if cb_kill.button("🔴 Encerrar", key=f"btn_kill_sess_{id_sessao_db}", use_container_width=True):
                                 db.limpar_sessao(id_ser)
                                 st.session_state.mensagem_sucesso = f"A sessão '{nome_ser}' foi encerrada com sucesso."
                                 st.rerun()
@@ -1798,7 +1830,8 @@ elif menu.startswith("servico_"):
                             # Se a sessão expirou, removemos o estado da sessão para forçar novo login
                             if "Sessão expirada" in err_str:
                                 st.session_state.pop(cookie_key, None)
-                                st.warning("🔄 Sessão expirada no portal. Por favor, realize o login novamente.")
+                                db.limpar_sessao(id_servico)
+                                st.warning("🔄 Sessão expirada no portal. O banco de dados foi limpo. Por favor, realize o login novamente.")
                                 st.rerun()
                         finally:
                             # Limpa os PDFs temporários do servidor

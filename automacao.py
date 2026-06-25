@@ -341,3 +341,33 @@ def encerrar_sessao_srop(session_state: dict, url_login: str) -> None:
             pass # Ignora erros de timeout, pois a limpeza local do banco é garantida
         finally:
             browser.close()
+
+def testar_conexao_srop(session_state: dict, url_consulta: str) -> bool:
+    """Testa se a sessão do SROP está viva fazendo uma requisição mínima."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(storage_state=session_state)
+        
+        headers = {}
+        if "srop_bearer_token" in session_state:
+            headers["Authorization"] = session_state["srop_bearer_token"]
+            
+        try:
+            from datetime import datetime
+            hoje = datetime.now().strftime("%Y-%m-%d")
+            url_consulta_formatada = url_consulta.replace("{DataInicialRegistro}", hoje).replace("{DataFinalRegistro}", hoje)
+            
+            response = context.request.get(url_consulta_formatada, headers=headers)
+            
+            if response.status in [401, 403]:
+                return False
+                
+            content_type = response.headers.get("content-type", "")
+            if "text/html" in content_type:
+                return False
+                
+            return True
+        except Exception:
+            return False
+        finally:
+            browser.close()

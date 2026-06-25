@@ -170,7 +170,8 @@ def inicializar_banco():
         Senha TEXT NOT NULL,
         DuplaAutenticacao TEXT NOT NULL DEFAULT 'Não',
         Tipo TEXT NOT NULL DEFAULT 'SROP',
-        Status TEXT NOT NULL DEFAULT 'Ativo'
+        Status TEXT NOT NULL DEFAULT 'Ativo',
+        Tempo_Expiracao_Horas INTEGER NOT NULL DEFAULT 4
     )
     """)
     
@@ -189,6 +190,8 @@ def inicializar_banco():
         cursor.execute("ALTER TABLE servicos ADD COLUMN Tipo TEXT NOT NULL DEFAULT 'SROP'")
     if "Status" not in colunas_ser:
         cursor.execute("ALTER TABLE servicos ADD COLUMN Status TEXT NOT NULL DEFAULT 'Ativo'")
+    if "Tempo_Expiracao_Horas" not in colunas_ser:
+        cursor.execute("ALTER TABLE servicos ADD COLUMN Tempo_Expiracao_Horas INTEGER NOT NULL DEFAULT 4")
     
     # Migra dados antigos de UPMs para a tabela de vínculos (muitos-para-muitos)
     cursor.execute("SELECT COUNT(*) FROM upm_bairros")
@@ -928,6 +931,12 @@ def salvar_sessao(servico_id: int, session_data: dict) -> None:
 def obter_sessao_ativa(servico_id: int) -> dict:
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+    
+    # Busca o tempo limite configurado
+    cursor.execute("SELECT Tempo_Expiracao_Horas FROM servicos WHERE ID = ?", (servico_id,))
+    row_ser = cursor.fetchone()
+    tempo_horas = int(row_ser[0]) if row_ser else 4
+    
     cursor.execute("SELECT ID, Session_Data, Data_Login FROM servicos_sessoes WHERE Servico_ID = ? AND Status = 'Ativa' ORDER BY ID DESC LIMIT 1", (servico_id,))
     row = cursor.fetchone()
     conn.close()
@@ -943,14 +952,14 @@ def obter_sessao_ativa(servico_id: int) -> dict:
         # Fallback de segurança caso a sessão já estivesse gravada em texto puro antes da atualização
         session_data_str = session_data_cripto
     
-    # Valida regra de 4 horas
+    # Valida regra de expiração configurada
     try:
         data_login = datetime.strptime(data_login_str, '%Y-%m-%d %H:%M:%S')
-        limite = data_login + timedelta(hours=4)
+        limite = data_login + timedelta(hours=tempo_horas)
         if datetime.now() > limite:
             # Sessão expirada
             conn = sqlite3.connect(DB_FILE)
-            conn.execute("UPDATE servicos_sessoes SET Status = 'Expirada (4h)' WHERE ID = ?", (sessao_db_id,))
+            conn.execute("UPDATE servicos_sessoes SET Status = ? WHERE ID = ?", (f'Expirada ({tempo_horas}h)', sessao_db_id))
             conn.commit()
             conn.close()
             return None
@@ -987,5 +996,12 @@ def limpar_historico_inativo() -> None:
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM servicos_sessoes WHERE Status != 'Ativa'")
+    conn.commit()
+    conn.close()
+
+def atualizar_status_sessao(sessao_id: int, status: str) -> None:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE servicos_sessoes SET Status = ? WHERE ID = ?", (status, sessao_id))
     conn.commit()
     conn.close()
