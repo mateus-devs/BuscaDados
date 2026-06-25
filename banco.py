@@ -100,6 +100,9 @@ DB_FILE = "buscadados.db"
 CONN_STR = f"sqlite:///{DB_FILE}"
 engine = create_engine(CONN_STR)
 
+import streamlit as st
+
+@st.cache_resource
 def inicializar_banco():
     """Cria as tabelas estruturadas com restrições NOT NULL se o banco for novo"""
     conn = sqlite3.connect(DB_FILE)

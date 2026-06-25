@@ -14,14 +14,13 @@ db.inicializar_banco()
 st.markdown("""
     <style>
         div[data-testid="stSidebarUserContent"] div[role="radiogroup"] label {
-            background-color: rgba(248, 249, 250, 0.6) !important;
-            backdrop-filter: blur(10px);
+            background-color: rgba(248, 249, 250, 0.9) !important;
             padding: 12px 18px !important;
             border-radius: 12px !important;
             margin-bottom: 10px !important;
             border: 1px solid rgba(233, 236, 239, 0.8) !important;
             box-shadow: 0 2px 4px rgba(0,0,0,0.02) !important;
-            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+            transition: all 0.15s ease-out !important;
             cursor: pointer !important;
             width: 100% !important;
             display: flex !important;
@@ -53,6 +52,24 @@ st.markdown("""
             margin-left: 0px !important;
             font-size: 1.05rem !important;
             letter-spacing: 0.3px !important;
+        }
+        
+        /* --- CORREÇÕES VISUAIS DA GRADE (GRID) E PAGINAÇÃO --- */
+        /* Alinha botões e textos da grade centralizados verticalmente */
+        div[data-testid="stHorizontalBlock"] {
+            align-items: center !important;
+        }
+        /* Deixa os botões da tabela mais achatados para diminuir a altura inútil da linha */
+        div[data-testid="stHorizontalBlock"] button {
+            min-height: 36px !important;
+            padding-top: 0px !important;
+            padding-bottom: 0px !important;
+        }
+        /* Estiliza o dropdown de paginação para combinar com os botões brancos */
+        div[data-testid="stSelectbox"] > div[data-baseweb="select"] > div {
+            min-height: 36px !important;
+            border-radius: 8px !important;
+            border: 1px solid rgba(49, 51, 63, 0.2) !important;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -164,10 +181,31 @@ if menu == "🗺️ Manutenção de Municípios":
         st.write("")
         df_mun = db.listar_dados("municipios")
         
+        texto_busca_mun = st.text_input("🔍 Buscar Município por Nome:", key="busca_mun_lista")
+        if texto_busca_mun:
+            import unicodedata
+            def remover_acento_mun(t):
+                if not t: return ""
+                return "".join(c for c in unicodedata.normalize('NFKD', str(t)) if not unicodedata.combining(c)).lower()
+            
+            busca_norm = remover_acento_mun(texto_busca_mun)
+            mun_norm = df_mun["Municipio"].apply(remover_acento_mun)
+            df_mun = df_mun[mun_norm.str.contains(busca_norm, na=False)]
+            
+        if "pagina_mun" not in st.session_state: st.session_state.pagina_mun = 1
+        
+        itens_por_pagina = 10
+        total_paginas_mun = max(1, (len(df_mun) - 1) // itens_por_pagina + 1)
+        if st.session_state.pagina_mun > total_paginas_mun: st.session_state.pagina_mun = total_paginas_mun
+        
+        start_idx = (st.session_state.pagina_mun - 1) * itens_por_pagina
+        end_idx = start_idx + itens_por_pagina
+        df_mun_exibicao = df_mun.iloc[start_idx:end_idx]
+        
         if df_mun.empty:
             st.info("Nenhum município cadastrado no banco de dados ainda.")
         else:
-            st.subheader("Municípios Cadastrados")
+            st.subheader(f"Municípios Cadastrados (Página {st.session_state.pagina_mun} de {total_paginas_mun})")
             col_id, col_nome, col_est, col_acoes = st.columns([0.8, 3, 3, 3.2])
             with col_id: st.write("**ID**")
             with col_nome: st.write("**Município**")
@@ -175,7 +213,7 @@ if menu == "🗺️ Manutenção de Municípios":
             with col_acoes: st.write("**Ações Disponíveis**")
             st.markdown("<hr style='margin: 0px 0px 10px 0px; border-color: #f0f2f6;'>", unsafe_allow_html=True)
             
-            for idx, row in df_mun.iterrows():
+            for idx, row in df_mun_exibicao.iterrows():
                 id_atual = row["ID"]
                 mun_atual = row["Municipio"]
                 est_atual = row["Estado"]
@@ -196,6 +234,27 @@ if menu == "🗺️ Manutenção de Municípios":
                 if c_exc.button("🗑️ Excluir", key=f"exc_mun_{id_atual}", width="stretch", type="primary"):
                     st.session_state.sub_tela_mun = "formulario"; st.session_state.modo_form_mun = "excluir"
                     st.session_state.dados_sel_mun = {"ID": id_atual, "Municipio": mun_atual, "Estado": est_atual}; st.rerun()
+            
+            st.write("")
+            col_ant, col_e1, col_pag, col_e2, col_prox = st.columns([1, 1, 0.8, 1, 1])
+            if col_ant.button("⬅️ Página Anterior", disabled=(st.session_state.pagina_mun <= 1), use_container_width=True, key="btn_ant_mun"):
+                st.session_state.pagina_mun -= 1; st.rerun()
+                
+            def set_page_mun():
+                st.session_state.pagina_mun = st.session_state.combo_pag_mun
+                
+            with col_pag:
+                st.selectbox(
+                    "Pular para a página", 
+                    options=range(1, total_paginas_mun + 1), 
+                    index=st.session_state.pagina_mun - 1,
+                    key="combo_pag_mun",
+                    on_change=set_page_mun,
+                    label_visibility="collapsed"
+                )
+                
+            if col_prox.button("Próxima Página ➡️", disabled=(st.session_state.pagina_mun >= total_paginas_mun), use_container_width=True, key="btn_prox_mun"):
+                st.session_state.pagina_mun += 1; st.rerun()
 
     elif st.session_state.sub_tela_mun == "formulario":
         modo = st.session_state.modo_form_mun; dados = st.session_state.dados_sel_mun
@@ -311,12 +370,22 @@ elif menu == "🏘️ Manutenção de Bairros":
                 # Filtra as linhas que contêm o termo pesquisado
                 df_bai = df_bai[bairros_normalizados.str.contains(termo_busca_normalizado, na=False)]
             
+            if "pagina_bai" not in st.session_state: st.session_state.pagina_bai = 1
+            
+            itens_por_pagina_bai = 10
+            total_paginas_bai = max(1, (len(df_bai) - 1) // itens_por_pagina_bai + 1)
+            if st.session_state.pagina_bai > total_paginas_bai: st.session_state.pagina_bai = total_paginas_bai
+            
+            start_idx_bai = (st.session_state.pagina_bai - 1) * itens_por_pagina_bai
+            end_idx_bai = start_idx_bai + itens_por_pagina_bai
+            df_bai_exibicao = df_bai.iloc[start_idx_bai:end_idx_bai]
+            
             st.write("")
-            st.subheader("Bairros Cadastrados")
             
             if df_bai.empty:
                 st.warning("Nenhum bairro encontrado para os filtros selecionados.")
             else:
+                st.subheader(f"Bairros Cadastrados (Página {st.session_state.pagina_bai} de {total_paginas_bai})")
                 col_id, col_nome, col_mun, col_acoes = st.columns([0.8, 2.5, 2.5, 4.2])
                 with col_id: st.write("**ID**")
                 with col_nome: st.write("**Bairro**")
@@ -324,7 +393,7 @@ elif menu == "🏘️ Manutenção de Bairros":
                 with col_acoes: st.write("**Ações Disponíveis**")
                 st.markdown("<hr style='margin: 0px 0px 10px 0px; border-color: #f0f2f6;'>", unsafe_allow_html=True)
                 
-                for idx, row in df_bai.iterrows():
+                for idx, row in df_bai_exibicao.iterrows():
                     id_atual = row["ID"]
                     bai_atual = row["Bairro"]
                     mun_atual = row["Municipio"]
@@ -346,6 +415,27 @@ elif menu == "🏘️ Manutenção de Bairros":
                     if c_exc.button("🗑️ Excluir", key=f"exc_bai_{id_atual}", width="stretch", type="primary"):
                         st.session_state.sub_tela_bai = "formulario"; st.session_state.modo_form_bai = "excluir"
                         st.session_state.dados_sel_bai = {"ID": id_atual, "Bairro": bai_atual, "Municipio": mun_atual}; st.rerun()
+                
+                st.write("")
+                col_ant, col_e1, col_pag, col_e2, col_prox = st.columns([1, 1, 0.8, 1, 1])
+                if col_ant.button("⬅️ Página Anterior", disabled=(st.session_state.pagina_bai <= 1), use_container_width=True, key="btn_ant_bai"):
+                    st.session_state.pagina_bai -= 1; st.rerun()
+                    
+                def set_page_bai():
+                    st.session_state.pagina_bai = st.session_state.combo_pag_bai
+                    
+                with col_pag:
+                    st.selectbox(
+                        "Pular para a página", 
+                        options=range(1, total_paginas_bai + 1), 
+                        index=st.session_state.pagina_bai - 1,
+                        key="combo_pag_bai",
+                        on_change=set_page_bai,
+                        label_visibility="collapsed"
+                    )
+                    
+                if col_prox.button("Próxima Página ➡️", disabled=(st.session_state.pagina_bai >= total_paginas_bai), use_container_width=True, key="btn_prox_bai"):
+                    st.session_state.pagina_bai += 1; st.rerun()
 
     elif st.session_state.sub_tela_bai == "formulario":
         modo = st.session_state.modo_form_bai; dados = st.session_state.dados_sel_bai
@@ -511,11 +601,21 @@ elif menu == "🏢 Manutenção de UPMs":
         st.write("")
         df_upm = db.listar_dados("upms")
         
+        if "pagina_upm" not in st.session_state: st.session_state.pagina_upm = 1
+        
+        itens_por_pagina_upm = 10
+        total_paginas_upm = max(1, (len(df_upm) - 1) // itens_por_pagina_upm + 1)
+        if st.session_state.pagina_upm > total_paginas_upm: st.session_state.pagina_upm = total_paginas_upm
+        
+        start_idx_upm = (st.session_state.pagina_upm - 1) * itens_por_pagina_upm
+        end_idx_upm = start_idx_upm + itens_por_pagina_upm
+        df_upm_exibicao = df_upm.iloc[start_idx_upm:end_idx_upm]
+        
         if df_upm.empty:
             st.info("Nenhuma UPM cadastrada no banco de dados ainda.")
         else:
-            st.subheader("UPMs Cadastradas")
-            col_id, col_upm, col_desc, col_vis, col_edt, col_vinc, col_exc = st.columns([0.8, 2.2, 3.6, 1.1, 1.1, 1.1, 1.1])
+            st.subheader(f"UPMs Cadastradas (Página {st.session_state.pagina_upm} de {total_paginas_upm})")
+            col_id, col_upm, col_desc, col_vis, col_edt, col_vinc, col_exc = st.columns([0.8, 2.2, 3.4, 1.1, 1.1, 1.3, 1.1])
             with col_id: st.write("**ID**")
             with col_upm: st.write("**UPM**")
             with col_desc: st.write("**Descrição**")
@@ -525,12 +625,12 @@ elif menu == "🏢 Manutenção de UPMs":
             with col_exc: st.write("**Excluir**")
             st.markdown("<hr style='margin: 0px 0px 10px 0px; border-color: #f0f2f6;'>", unsafe_allow_html=True)
             
-            for idx, row in df_upm.iterrows():
+            for idx, row in df_upm_exibicao.iterrows():
                 id_atual = row["ID"]
                 upm_atual = row["UPM"]
                 desc_atual = row.get("Descricao", "")
                 
-                c_id, c_upm, c_desc, c_vis, c_edt, c_vinc, c_exc = st.columns([0.8, 2.2, 3.6, 1.1, 1.1, 1.1, 1.1])
+                c_id, c_upm, c_desc, c_vis, c_edt, c_vinc, c_exc = st.columns([0.8, 2.2, 3.4, 1.1, 1.1, 1.3, 1.1])
                 c_id.write(f"`{id_atual}`")
                 c_upm.write(upm_atual)
                 c_desc.write(desc_atual)
@@ -547,6 +647,27 @@ elif menu == "🏢 Manutenção de UPMs":
                 if c_exc.button("🗑️ Excluir", key=f"exc_upm_{id_atual}", width="stretch", type="primary"):
                     st.session_state.sub_tela_upm = "formulario"; st.session_state.modo_form_upm = "excluir"
                     st.session_state.dados_sel_upm = {"ID": id_atual, "UPM": upm_atual, "Descricao": desc_atual}; st.rerun()
+            
+            st.write("")
+            col_ant, col_e1, col_pag, col_e2, col_prox = st.columns([1, 1, 0.8, 1, 1])
+            if col_ant.button("⬅️ Página Anterior", disabled=(st.session_state.pagina_upm <= 1), use_container_width=True, key="btn_ant_upm"):
+                st.session_state.pagina_upm -= 1; st.rerun()
+                
+            def set_page_upm():
+                st.session_state.pagina_upm = st.session_state.combo_pag_upm
+                
+            with col_pag:
+                st.selectbox(
+                    "Pular para a página", 
+                    options=range(1, total_paginas_upm + 1), 
+                    index=st.session_state.pagina_upm - 1,
+                    key="combo_pag_upm",
+                    on_change=set_page_upm,
+                    label_visibility="collapsed"
+                )
+                
+            if col_prox.button("Próxima Página ➡️", disabled=(st.session_state.pagina_upm >= total_paginas_upm), use_container_width=True, key="btn_prox_upm"):
+                st.session_state.pagina_upm += 1; st.rerun()
 
     elif st.session_state.sub_tela_upm == "formulario":
         modo = st.session_state.modo_form_upm; dados = st.session_state.dados_sel_upm
@@ -816,10 +937,20 @@ elif menu == "🔌 Manutenção de Serviços":
         st.write("")
         df_ser = db.listar_dados("servicos")
         
+        if "pagina_ser" not in st.session_state: st.session_state.pagina_ser = 1
+        
+        itens_por_pagina_ser = 10
+        total_paginas_ser = max(1, (len(df_ser) - 1) // itens_por_pagina_ser + 1)
+        if st.session_state.pagina_ser > total_paginas_ser: st.session_state.pagina_ser = total_paginas_ser
+        
+        start_idx_ser = (st.session_state.pagina_ser - 1) * itens_por_pagina_ser
+        end_idx_ser = start_idx_ser + itens_por_pagina_ser
+        df_ser_exibicao = df_ser.iloc[start_idx_ser:end_idx_ser]
+        
         if df_ser.empty:
             st.info("Nenhum serviço cadastrado no banco de dados ainda.")
         else:
-            st.subheader("Serviços Cadastrados")
+            st.subheader(f"Serviços Cadastrados (Página {st.session_state.pagina_ser} de {total_paginas_ser})")
             col_id, col_nome, col_status, col_acoes = st.columns([0.8, 3, 2, 4.2])
             with col_id: st.write("**ID**")
             with col_nome: st.write("**Nome do Serviço**")
@@ -827,7 +958,7 @@ elif menu == "🔌 Manutenção de Serviços":
             with col_acoes: st.write("**Ações Disponíveis**")
             st.markdown("<hr style='margin: 0px 0px 10px 0px; border-color: #f0f2f6;'>", unsafe_allow_html=True)
             
-            for idx, row in df_ser.iterrows():
+            for idx, row in df_ser_exibicao.iterrows():
                 id_atual = row["ID"]
                 nome_atual = row["Nome"]
                 login_atual = row["Login"]
@@ -888,6 +1019,27 @@ elif menu == "🔌 Manutenção de Serviços":
                         "Tempo_Expiracao_Horas": tempo_expiracao
                     }
                     st.rerun()
+                    
+            st.write("")
+            col_ant, col_e1, col_pag, col_e2, col_prox = st.columns([1, 1, 0.8, 1, 1])
+            if col_ant.button("⬅️ Página Anterior", disabled=(st.session_state.pagina_ser <= 1), use_container_width=True, key="btn_ant_ser"):
+                st.session_state.pagina_ser -= 1; st.rerun()
+                
+            def set_page_ser():
+                st.session_state.pagina_ser = st.session_state.combo_pag_ser
+                
+            with col_pag:
+                st.selectbox(
+                    "Pular para a página", 
+                    options=range(1, total_paginas_ser + 1), 
+                    index=st.session_state.pagina_ser - 1,
+                    key="combo_pag_ser",
+                    on_change=set_page_ser,
+                    label_visibility="collapsed"
+                )
+                
+            if col_prox.button("Próxima Página ➡️", disabled=(st.session_state.pagina_ser >= total_paginas_ser), use_container_width=True, key="btn_prox_ser"):
+                st.session_state.pagina_ser += 1; st.rerun()
 
     elif st.session_state.sub_tela_ser == "formulario":
         modo = st.session_state.modo_form_ser
@@ -1711,18 +1863,31 @@ elif menu.startswith("servico_"):
                 
                 col_data_ini, col_data_fim = st.columns(2)
                 with col_data_ini:
-                    data_inicial = st.date_input("Data Inicial do Registro", value=ontem, key=f"exec_dt_ini_{id_servico}")
+                    data_inicial = st.date_input("Data Inicial do Registro", value=ontem, format="DD/MM/YYYY", key=f"exec_dt_ini_{id_servico}")
                 with col_data_fim:
-                    data_final = st.date_input("Data Final do Registro", value=ontem, key=f"exec_dt_fim_{id_servico}")
+                    data_final = st.date_input("Data Final do Registro", value=ontem, format="DD/MM/YYYY", key=f"exec_dt_fim_{id_servico}")
                 
                 st.write("")
                 
-                col_btn_run, col_btn_logoff = st.columns([3, 1])
+                # Trava de Segurança para períodos longos
+                from datetime import timedelta
+                periodo_longo = (data_final - data_inicial) > timedelta(days=1)
+                pode_executar = True
+                
+                if periodo_longo:
+                    st.warning("⚠️ **Aviso de Sobrecarga:** O período selecionado é maior que 1 dia! Consultas longas podem retornar centenas de registros e demorar muito tempo para serem concluídas.")
+                    if not st.checkbox("Estou ciente e desejo executar a consulta mesmo assim.", key=f"chk_ciente_{id_servico}"):
+                        pode_executar = False
+                
+                col_btn_run, col_btn_cancel, col_btn_logoff = st.columns(3)
                 
                 with col_btn_run:
-                    btn_run = st.button("🚀 Consultar e Extrair Dados", type="primary", width="stretch", key=f"btn_run_{id_servico}")
+                    btn_run = st.button("🚀 Consultar e Extrair Dados", type="primary", use_container_width=True, disabled=not pode_executar, key=f"btn_run_{id_servico}")
+                with col_btn_cancel:
+                    placeholder_cancel = st.empty()
+                    btn_cancel = placeholder_cancel.button("⏹️ Cancelar Extração Agora", use_container_width=True, disabled=not btn_run, key=f"btn_interrupt_{id_servico}")
                 with col_btn_logoff:
-                    btn_logoff = st.button("🔴 Encerrar Sessão", width="stretch", key=f"btn_logoff_{id_servico}")
+                    btn_logoff = st.button("🔴 Encerrar Sessão", use_container_width=True, disabled=(btn_run), key=f"btn_logoff_{id_servico}")
                 
                 if btn_logoff:
                     with st.spinner("Enviando comando de logoff para o servidor..."):
@@ -1738,6 +1903,9 @@ elif menu.startswith("servico_"):
                 
                 if btn_run:
                     import shutil, os
+                    
+                    st.info("💡 **A extração começou!** Se você perceber que colocou filtros errados ou quiser desistir, clique no botão **Cancelar Extração Agora** acima.")
+                        
                     with st.status("Iniciando consulta e extração...", expanded=True) as status_ui:
                         def atualizar_status(mensagem: str):
                             status_ui.update(label=mensagem, state="running", expanded=True)
@@ -1853,6 +2021,8 @@ elif menu.startswith("servico_"):
                             # Limpa os PDFs temporários do servidor
                             if os.path.exists(temp_dir):
                                 shutil.rmtree(temp_dir, ignore_errors=True)
+                            # Desativa o botão de cancelar imediatamente após o término do processamento
+                            placeholder_cancel.button("⏹️ Cancelar Extração Agora", use_container_width=True, disabled=True, key=f"btn_interrupt_done_{id_servico}")
             
             # Exibe o resultado e o botão de download se houver dados no session_state
             if result_key in st.session_state:
