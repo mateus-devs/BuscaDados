@@ -72,8 +72,12 @@ st.sidebar.subheader("Menu Principal")
 
 opcoes_menu = ["Manutenção de Município", "Manutenção de Bairro", "Manutenção de UPMs", "Manutenção de Serviços", "Importação de Arquivo de Dados", "Extração de PDFs (BO)", "Carga e Configurações"]
 
-# O index do radio deve ser baseado no que está em st.session_state.radio_selecionado
-idx_radio_atual = opcoes_menu.index(st.session_state.radio_selecionado) if st.session_state.radio_selecionado in opcoes_menu else 0
+# O index do radio deve ser baseado no que está em st.session_state.radio_selecionado, 
+# MAS se estivermos numa tela de serviço (override), o menu principal deve ficar "desmarcado"
+if st.session_state.menu_override:
+    idx_radio_atual = None
+else:
+    idx_radio_atual = opcoes_menu.index(st.session_state.radio_selecionado) if st.session_state.radio_selecionado in opcoes_menu else 0
 
 radio_val = st.sidebar.radio(
     "Selecione uma opção:",
@@ -82,12 +86,13 @@ radio_val = st.sidebar.radio(
     label_visibility="collapsed"
 )
 
-# Se o valor retornado pelo radio for diferente do guardado, o usuário clicou ativamente no radio!
-# Nesse caso, removemos o override do serviço e atualizamos a seleção do radio.
-if radio_val != st.session_state.radio_selecionado:
-    st.session_state.radio_selecionado = radio_val
-    st.session_state.menu_override = None
-    st.rerun()
+# Se o usuário clicou ativamente no radio (radio_val != None) e o valor for diferente do guardado,
+# OU se ele clicou no menu principal para sair de uma tela de serviço (override ativo)
+if radio_val is not None:
+    if radio_val != st.session_state.radio_selecionado or st.session_state.menu_override is not None:
+        st.session_state.radio_selecionado = radio_val
+        st.session_state.menu_override = None
+        st.rerun()
 
 # Definimos a variável final 'menu' a ser usada nas telas
 menu = st.session_state.menu_override if st.session_state.menu_override else radio_val
