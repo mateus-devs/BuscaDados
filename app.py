@@ -783,13 +783,18 @@ elif menu == "Manutenção de Serviços":
         st.session_state.mensagem_sucesso = None
         
     if st.session_state.sub_tela_ser == "listar":
-        if st.button("➕ Cadastrar Novo Serviço", width="stretch"):
+        col_btn_cad, col_btn_mon = st.columns(2)
+        if col_btn_cad.button("➕ Cadastrar Novo Serviço", width="stretch"):
             st.session_state.sub_tela_ser = "formulario"
             st.session_state.modo_form_ser = "cadastro"
             st.session_state.dados_sel_ser = {
                 "ID": None, "Nome": "", "UrlLogin": "", "UrlConsulta": "", "UrlPdf": "", "Login": "", "Senha": "",
                 "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo"
             }
+            st.rerun()
+            
+        if col_btn_mon.button("🖥️ Monitoramento de Sessões", width="stretch"):
+            st.session_state.sub_tela_ser = "monitoramento"
             st.rerun()
             
         st.write("")
@@ -947,6 +952,92 @@ elif menu == "Manutenção de Serviços":
                 st.rerun()
             if c_voltar.button("❌ Cancelar e Manter", key="btn_voltar_del_ser", width="stretch"):
                 st.session_state.sub_tela_ser = "listar"; st.rerun()
+
+    elif st.session_state.sub_tela_ser == "monitoramento":
+        st.subheader("🖥️ Monitoramento Global de Sessões")
+        
+        col_voltar, col_limpar = st.columns(2)
+        if col_voltar.button("⬅️ Voltar para Manutenção de Serviços", width="stretch"):
+            st.session_state.sub_tela_ser = "listar"
+            st.rerun()
+        if col_limpar.button("🧹 Limpar Histórico de Inativos", width="stretch"):
+            db.limpar_historico_inativo()
+            st.session_state.mensagem_sucesso = "Todo o histórico de sessões antigas foi apagado com sucesso."
+            st.rerun()
+            
+        st.write("")
+        df_sessoes = db.listar_dados("servicos_sessoes")
+        if df_sessoes.empty:
+            st.info("🟢 Nenhuma sessão pendente. O sistema está limpo.")
+        else:
+            df_servicos = db.listar_dados("servicos")
+            if not df_servicos.empty:
+                df_sessoes = df_sessoes.merge(df_servicos[['ID', 'Nome']], left_on='Servico_ID', right_on='ID', how='left', suffixes=('', '_servico'))
+                df_sessoes = df_sessoes.rename(columns={'Nome': 'Serviço'})
+                
+            # Ordena da sessão mais recente para a mais antiga (Ordem Decrescente)
+            df_sessoes = df_sessoes.sort_values(by='Data_Login', ascending=False)
+                
+            from datetime import datetime
+            
+            for idx, row in df_sessoes.iterrows():
+                id_sessao_db = row['ID']
+                id_ser = row['Servico_ID']
+                nome_ser = row.get('Serviço', f'Desconhecido (ID {id_ser})')
+                data_login_str = row['Data_Login']
+                status_sessao = row.get('Status', 'Ativa')
+                
+                try:
+                    dt_login = datetime.strptime(data_login_str, '%Y-%m-%d %H:%M:%S')
+                    logado_em_fmt = dt_login.strftime('%d/%m/%Y %H:%M:%S')
+                    
+                    if status_sessao == 'Ativa':
+                        diff = datetime.now() - dt_login
+                        total_seconds = int(diff.total_seconds())
+                        hours = total_seconds // 3600
+                        minutes = (total_seconds % 3600) // 60
+                        seconds = total_seconds % 60
+                        tempo_ativo_fmt = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                    else:
+                        tempo_ativo_fmt = "--:--:--"
+                except:
+                    logado_em_fmt = data_login_str
+                    tempo_ativo_fmt = "?"
+
+                if status_sessao == "Ativa":
+                    icon = "🟢"
+                    status_lbl = f"<span style='color: #166534;'>{status_sessao.upper()}</span>"
+                else:
+                    icon = "⚪"
+                    status_lbl = f"<span style='color: #6c757d;'>{status_sessao.upper()}</span>"
+                
+                with st.container():
+                    col_status, col_servico, col_logado, col_tempo, col_btn = st.columns([1.5, 2.5, 2.5, 1.5, 2])
+                    
+                    with col_status:
+                        st.markdown(f"<div style='padding-top: 5px; font-size: 12px; color: #6c757d; text-transform: uppercase;'>Status</div><div style='padding-top: 2px; font-size: 15px;'><b>{icon} {status_lbl}</b></div>", unsafe_allow_html=True)
+                    with col_servico:
+                        st.markdown(f"<div style='padding-top: 5px; font-size: 12px; color: #6c757d; text-transform: uppercase;'>Serviço</div><div style='padding-top: 2px; font-size: 15px;'><b style='color: #343a40;'>{nome_ser}</b></div>", unsafe_allow_html=True)
+                    with col_logado:
+                        st.markdown(f"<div style='padding-top: 5px; font-size: 12px; color: #6c757d; text-transform: uppercase;'>Logado em</div><div style='padding-top: 2px; font-size: 15px;'><b style='color: #343a40;'>{logado_em_fmt}</b></div>", unsafe_allow_html=True)
+                    with col_tempo:
+                        st.markdown(f"<div style='padding-top: 5px; font-size: 12px; color: #6c757d; text-transform: uppercase;'>Tempo Ativo</div><div style='padding-top: 2px; font-size: 15px;'><b style='color: #343a40;'>{tempo_ativo_fmt}</b></div>", unsafe_allow_html=True)
+                    
+                    with col_btn:
+                        st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+                        if status_sessao == "Ativa":
+                            if st.button("🔴 Encerrar", key=f"btn_kill_sess_{id_sessao_db}", use_container_width=True):
+                                db.limpar_sessao(id_ser)
+                                st.session_state.mensagem_sucesso = f"A sessão '{nome_ser}' foi encerrada com sucesso."
+                                st.rerun()
+                        else:
+                            if st.button("🗑️ Apagar", key=f"btn_kill_sess_{id_sessao_db}", use_container_width=True):
+                                db.excluir_historico_sessao(id_sessao_db)
+                                st.session_state.mensagem_sucesso = f"O registro de histórico foi apagado permanentemente."
+                                st.rerun()
+                                
+                    st.markdown("<hr style='margin: 15px 0; border: none; border-top: 1px solid #e9ecef;'>", unsafe_allow_html=True)
+
 
 # =====================================================================
 # 4. TELA: IMPORTAÇÃO DE ARQUIVO DE DADOS
@@ -1302,7 +1393,7 @@ elif menu == "Carga e Configurações":
     
     st.write("Gerencie a base de dados do sistema, baixe o arquivo de modelo para preenchimento, realize cargas em lote ou limpe o banco de dados completamente.")
     
-    tab_carga, tab_limpeza = st.tabs(["📥 Carga Geral de Dados", "⚠️ Redefinir Banco"])
+    tab_carga, tab_export, tab_limpeza = st.tabs(["📥 Carga Geral de Dados", "📤 Exportar Banco", "⚠️ Redefinir Banco"])
     
     with tab_carga:
         st.subheader("1. Baixar Arquivo de Modelo")
@@ -1316,6 +1407,7 @@ elif menu == "Carga e Configurações":
             pd.DataFrame(columns=["Bairro", "Municipio"]).to_excel(writer, index=False, sheet_name="Bairros")
             pd.DataFrame(columns=["Bairro_Oficial", "Municipio", "Nome_Alternativo"]).to_excel(writer, index=False, sheet_name="Nomes Alternativos")
             pd.DataFrame(columns=["UPM", "Descricao", "Bairro", "Municipio", "Estado"]).to_excel(writer, index=False, sheet_name="UPMs")
+            pd.DataFrame(columns=["Nome", "UrlLogin", "UrlConsulta", "UrlPdf", "Login", "Senha", "DuplaAutenticacao", "Tipo", "Status"]).to_excel(writer, index=False, sheet_name="Servicos")
         processed_model = buffer_model.getvalue()
         
         st.download_button(
@@ -1338,7 +1430,7 @@ elif menu == "Carga e Configurações":
                         abas = xls.sheet_names
                         
                         # Validação inicial de abas
-                        required_sheets = ["Municipios", "Bairros", "Nomes Alternativos", "UPMs"]
+                        required_sheets = ["Municipios", "Bairros", "Nomes Alternativos", "UPMs", "Servicos"]
                         missing = [s for s in required_sheets if s not in abas]
                         
                         if missing:
@@ -1349,18 +1441,20 @@ elif menu == "Carga e Configurações":
                             df_bai = pd.read_excel(xls, sheet_name="Bairros")
                             df_alt = pd.read_excel(xls, sheet_name="Nomes Alternativos")
                             df_upm = pd.read_excel(xls, sheet_name="UPMs")
+                            df_serv = pd.read_excel(xls, sheet_name="Servicos")
                             
                             # Executa as cargas na ordem correta
                             res_mun = db.importar_municipios_lote(df_mun)
                             res_bai = db.importar_bairros_lote(df_bai)
                             res_alt = db.importar_nomes_alternativos_lote(df_alt)
                             res_upm = db.importar_upms_lote(df_upm)
+                            res_serv = db.importar_servicos_lote(df_serv)
                             
                             st.success("🎉 Carga de dados realizada com sucesso!")
                             
                             # Exibe o resultado de forma visualmente rica
                             st.markdown("### Resumo da Carga")
-                            col1, col2, col3, col4 = st.columns(4)
+                            col1, col2, col3, col4, col5 = st.columns(5)
                             with col1:
                                 st.metric("Municípios", f"+{res_mun['inseridos']}", f"Ignorados: {res_mun['pulados']} | Erros: {res_mun['erros']}")
                             with col2:
@@ -1369,9 +1463,53 @@ elif menu == "Carga e Configurações":
                                 st.metric("Nomes Alternativos", f"+{res_alt['inseridos']}", f"Ignorados: {res_alt['pulados']} | Erros: {res_alt['erros']}")
                             with col4:
                                 st.metric("UPMs Mapeadas", f"+{res_upm['inseridos']}", f"Ignorados: {res_upm['pulados']} | Erros: {res_upm['erros']}")
+                            with col5:
+                                st.metric("Serviços", f"+{res_serv['inseridos']}", f"Ignorados: {res_serv['pulados']} | Erros: {res_serv['erros']}")
                 except Exception as e:
                     st.error(f"⚠️ Erro ao processar arquivo: {str(e)}")
                     
+    with tab_export:
+        st.subheader("📤 Exportar Todos os Dados (Backup em Excel)")
+        st.write("Baixe um arquivo Excel contendo todos os dados atualmente cadastrados no banco (Municípios, Bairros, Nomes Alternativos, UPMs e Serviços). Este arquivo possui exatamente a mesma estrutura aceita na aba de Importação e pode ser usado para clonar ou restaurar o sistema.")
+        
+        # Como a geração pode demorar, fazemos com um botão antes do download real
+        if st.button("🔄 Compilar Dados para Exportação", type="secondary", use_container_width=True):
+            with st.spinner("Extraindo e formatando dados do banco..."):
+                try:
+                    conn_exp = sqlite3.connect("buscadados.db")
+                    
+                    df_mun_exp = pd.read_sql("SELECT Municipio, Estado FROM municipios", conn_exp)
+                    df_bai_exp = pd.read_sql("SELECT Bairro, Municipio FROM bairros", conn_exp)
+                    df_alt_exp = pd.read_sql("SELECT b.Bairro as Bairro_Oficial, b.Municipio, a.Nome_Alternativo FROM bairros_alternativos a JOIN bairros b ON a.Bairro_ID = b.ID", conn_exp)
+                    df_upm_exp = pd.read_sql("SELECT UPM, Descricao, Bairro, Municipio, Estado FROM upms", conn_exp)
+                    df_serv_exp = pd.read_sql("SELECT Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status FROM servicos", conn_exp)
+                    
+                    conn_exp.close()
+                    
+                    import io
+                    buffer_export = io.BytesIO()
+                    with pd.ExcelWriter(buffer_export, engine='openpyxl') as writer:
+                        df_mun_exp.to_excel(writer, index=False, sheet_name="Municipios")
+                        df_bai_exp.to_excel(writer, index=False, sheet_name="Bairros")
+                        df_alt_exp.to_excel(writer, index=False, sheet_name="Nomes Alternativos")
+                        df_upm_exp.to_excel(writer, index=False, sheet_name="UPMs")
+                        df_serv_exp.to_excel(writer, index=False, sheet_name="Servicos")
+                    
+                    st.session_state.export_ready_data = buffer_export.getvalue()
+                    st.success("✅ Banco compilado com sucesso! Clique no botão abaixo para baixar.")
+                except Exception as e:
+                    st.error(f"Erro ao compilar banco: {str(e)}")
+                    
+        if "export_ready_data" in st.session_state and st.session_state.export_ready_data:
+            st.download_button(
+                label="📦 Baixar Backup em Excel (.xlsx)",
+                data=st.session_state.export_ready_data,
+                file_name="backup_buscadados_completo.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True
+            )
+
     with tab_limpeza:
         st.subheader("🚨 Excluir Todos os Dados do Sistema")
         st.error("ATENÇÃO: Esta operação é irreversível e irá deletar TODOS os municípios, bairros, nomes alternativos, UPMs e vínculos cadastrados no banco de dados!")
@@ -1423,66 +1561,295 @@ elif menu.startswith("servico_"):
             # Descriptografa a senha para usar ou exibir
             senha_db = db.descriptografar_senha(senha_db_cripto)
             
-            # Layout de colunas para o formulário
-            st.markdown("### 🔑 Credenciais e Parâmetros")
+            cookie_key = f"srop_cookies_{id_servico}"
+            result_key = f"resultado_exec_{id_servico}"
             
-            # Se Login e Senha estiverem preenchidos no banco de dados, não exibe na tela
-            has_credentials = bool(login_db.strip() and senha_db.strip())
+            # Tenta recuperar sessão ativa do banco caso não esteja na memória do Streamlit
+            if cookie_key not in st.session_state:
+                sessao_banco = db.obter_sessao_ativa(id_servico)
+                if sessao_banco:
+                    st.session_state[cookie_key] = sessao_banco["cookies"]
+                    st.session_state[f"srop_login_time_{id_servico}"] = sessao_banco["data_login"]
             
-            if has_credentials:
-                st.info("💡 As credenciais de acesso (Usuário e Senha) já estão pré-configuradas no banco de dados para este serviço e serão utilizadas automaticamente.")
-                usuario_exec = login_db.strip()
-                senha_exec = senha_db.strip()
-            else:
-                st.warning("⚠️ Este serviço não possui Usuário e Senha pré-configurados no banco. Por favor, insira-os abaixo para executar o login.")
-                col_user, col_pass = st.columns(2)
-                with col_user:
-                    usuario_exec = st.text_input("Usuário / Login", value="", key=f"exec_user_{id_servico}").strip()
-                with col_pass:
-                    senha_exec = st.text_input("Senha", value="", type="password", key=f"exec_pass_{id_servico}").strip()
-            
-            # Contêiner para MFA e Datas
-            col_mfa, col_data_ini, col_data_fim = st.columns(3)
-            
-            codigo_mfa = ""
-            with col_mfa:
+            # Se não estiver conectado (sem cookies salvos)
+            if cookie_key not in st.session_state:
+                st.markdown("### 🔑 Credenciais e Login")
+                
+                # Se Login e Senha estiverem preenchidos no banco de dados, não exibe na tela
+                has_credentials = bool(login_db.strip() and senha_db.strip())
+                
+                if has_credentials:
+                    st.info("💡 As credenciais de acesso (Usuário e Senha) já estão pré-configuradas no banco de dados para este serviço e serão utilizadas automaticamente.")
+                    usuario_exec = login_db.strip()
+                    senha_exec = senha_db.strip()
+                else:
+                    st.warning("⚠️ Este serviço não possui Usuário e Senha pré-configurados no banco. Por favor, insira-os abaixo para executar o login.")
+                    col_user, col_pass = st.columns(2)
+                    with col_user:
+                        usuario_exec = st.text_input("Usuário / Login", value="", key=f"exec_user_{id_servico}").strip()
+                    with col_pass:
+                        senha_exec = st.text_input("Senha", value="", type="password", key=f"exec_pass_{id_servico}").strip()
+                
+                codigo_mfa = ""
                 if dupla_autenticacao == "Sim":
                     codigo_mfa = st.text_input("Código do Autenticador (MFA)", value="", placeholder="Ex: 123456", key=f"exec_mfa_{id_servico}").strip()
-                else:
-                    st.text_input("Código do Autenticador (MFA)", value="Não requerido para este serviço", disabled=True, key=f"exec_mfa_disabled_{id_servico}")
-                    
-            from datetime import timedelta
-            ontem = datetime.today() - timedelta(days=1)
-            
-            with col_data_ini:
-                data_inicial = st.date_input("Data Inicial do Registro", value=ontem, key=f"exec_dt_ini_{id_servico}")
-            with col_data_fim:
-                data_final = st.date_input("Data Final do Registro", value=ontem, key=f"exec_dt_fim_{id_servico}")
                 
-            st.write("")
-            
-            # Botão de execução
-            if st.button("🚀 Iniciar Consulta e Integração", type="primary", width="stretch", key=f"btn_exec_ser_{id_servico}"):
-                if not usuario_exec or not senha_exec:
-                    st.error("⚠️ Erro: Usuário e Senha são necessários para realizar o acesso ao serviço.")
-                elif dupla_autenticacao == "Sim" and not codigo_mfa:
-                    st.error("⚠️ Erro: A dupla autenticação está ativada. Por favor, preencha o Código do Autenticador (MFA).")
-                else:
-                    with st.status("Simulando execução do login e consulta...", expanded=True) as status:
-                        status.update(label="Iniciando fluxo de login...", state="running")
-                        st.write(f"🔗 Conectando ao endereço de login: `{url_login}`...")
-                        st.write("Enviando credenciais de acesso...")
-                        
-                        if dupla_autenticacao == "Sim":
-                            st.write(f"🔑 Aplicando Código do Autenticador (MFA): `{codigo_mfa}`...")
+                st.write("")
+                
+                if st.button("🔑 Realizar Login no Serviço", type="primary", width="stretch", key=f"btn_login_{id_servico}"):
+                    if not usuario_exec or not senha_exec:
+                        st.error("⚠️ Erro: Usuário e Senha são necessários para realizar o acesso ao serviço.")
+                    elif dupla_autenticacao == "Sim" and not codigo_mfa:
+                        st.error("⚠️ Erro: A dupla autenticação está ativada. Por favor, preencha o Código do Autenticador (MFA).")
+                    else:
+                        with st.status("Autenticando no serviço...", expanded=True) as status_ui:
+                            def atualizar_status_login(mensagem: str):
+                                status_ui.update(label=mensagem, state="running", expanded=True)
+                                st.write(mensagem)
                             
-                        st.write("✅ Sessão iniciada com sucesso!")
+                            try:
+                                import automacao as aut
+                                session_state_data = aut.realizar_login_srop(
+                                    url_login=url_login,
+                                    usuario=usuario_exec,
+                                    senha=senha_exec,
+                                    codigo_mfa=codigo_mfa,
+                                    dupla_autenticacao=(dupla_autenticacao == "Sim"),
+                                    status_callback=atualizar_status_login
+                                )
+                                
+                                if session_state_data:
+                                    st.session_state[cookie_key] = session_state_data
+                                    # Salva a sessão no banco
+                                    db.salvar_sessao(id_servico, session_state_data)
+                                    # Grava a data no streamlit para exibir na tela imediatamente
+                                    from datetime import datetime
+                                    st.session_state[f"srop_login_time_{id_servico}"] = datetime.now()
+                                    
+                                    status_ui.update(label="Login realizado com sucesso!", state="complete", expanded=True)
+                                    st.success("🟢 Sessão iniciada e persistida com sucesso!")
+                                    st.rerun()
+                                else:
+                                    status_ui.update(label="Falha ao obter estado de sessão.", state="error", expanded=True)
+                                    st.error("❌ Não foi possível obter o estado da sessão de login.")
+                            except Exception as error_login:
+                                status_ui.update(label="Ocorreu um erro ao realizar o login.", state="error", expanded=True)
+                                st.error(f"❌ {str(error_login)}")
+            else:
+                # Se estiver conectado (cookies salvos)
+                sessao_info = "🟢 Conectado ao Serviço SROP"
+                if f"srop_login_time_{id_servico}" in st.session_state:
+                    from datetime import datetime
+                    dt_login = st.session_state[f"srop_login_time_{id_servico}"]
+                    if isinstance(dt_login, str):
+                        try:
+                            dt_login = datetime.strptime(dt_login, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            dt_login = datetime.now()
+                    diff = datetime.now() - dt_login
+                    total_seconds = int(diff.total_seconds())
+                    hours = total_seconds // 3600
+                    minutes = (total_seconds % 3600) // 60
+                    seconds = total_seconds % 60
+                    tempo_ativo_fmt = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                    logado_em_fmt = dt_login.strftime('%d/%m/%Y %H:%M:%S')
+                    sessao_info = f"🟢 Conectado ao Serviço SROP (Logado em: {logado_em_fmt} | Tempo Ativo: {tempo_ativo_fmt} | Limite: 4 Horas)"
+                
+                st.success(sessao_info)
+                
+                st.markdown("### 📅 Parâmetros de Consulta")
+                from datetime import timedelta
+                ontem = datetime.today() - timedelta(days=1)
+                
+                col_data_ini, col_data_fim = st.columns(2)
+                with col_data_ini:
+                    data_inicial = st.date_input("Data Inicial do Registro", value=ontem, key=f"exec_dt_ini_{id_servico}")
+                with col_data_fim:
+                    data_final = st.date_input("Data Final do Registro", value=ontem, key=f"exec_dt_fim_{id_servico}")
+                
+                st.write("")
+                
+                col_btn_run, col_btn_logoff = st.columns([3, 1])
+                
+                with col_btn_run:
+                    btn_run = st.button("🚀 Consultar e Extrair Dados", type="primary", width="stretch", key=f"btn_run_{id_servico}")
+                with col_btn_logoff:
+                    btn_logoff = st.button("🔴 Encerrar Sessão", width="stretch", key=f"btn_logoff_{id_servico}")
+                
+                if btn_logoff:
+                    with st.spinner("Enviando comando de logoff para o servidor..."):
+                        import automacao as aut
+                        aut.encerrar_sessao_srop(st.session_state[cookie_key], url_login)
+                        db.limpar_sessao(id_servico)
+                        st.session_state.pop(cookie_key, None)
+                        st.session_state.pop(result_key, None)
+                        st.session_state.pop(f"srop_login_time_{id_servico}", None)
+                        st.session_state.pop(f"zip_{result_key}", None)
+                    st.success("Sessão encerrada com sucesso no servidor e no banco!")
+                    st.rerun()
+                
+                if btn_run:
+                    import shutil, os
+                    with st.status("Iniciando consulta e extração...", expanded=True) as status_ui:
+                        def atualizar_status(mensagem: str):
+                            status_ui.update(label=mensagem, state="running", expanded=True)
+                            st.write(mensagem)
                         
-                        status.update(label="Acessando tela de consulta...", state="running")
-                        st.write(f"🔗 Acessando endereço de consulta: `{url_consulta}`...")
-                        st.write(f"📅 Aplicando filtros de data: de `{data_inicial.strftime('%d/%m/%Y')}` até `{data_final.strftime('%d/%m/%Y')}`...")
+                        # Pasta temporária para salvar os PDFs baixados
+                        temp_dir = os.path.join(os.getcwd(), "dados_pdf_temp")
+                        if os.path.exists(temp_dir):
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                        os.makedirs(temp_dir, exist_ok=True)
                         
-                        # Simulação concluída
-                        status.update(label="Consulta SROP concluída com sucesso!", state="complete")
-                        
-                    st.success("🎉 Integração e consulta simuladas com sucesso! Esta parte do fluxo está pronta. Aguardando novos detalhes da rotina de raspagem/leitura dos dados.")
+                        try:
+                            import automacao as aut
+                            import extrair_bo as ex_bo
+                            
+                            # Formata as datas para YYYY-MM-DD
+                            data_ini_str = data_inicial.strftime("%Y-%m-%d")
+                            data_fim_str = data_final.strftime("%Y-%m-%d")
+                            
+                            pdf_paths = aut.consultar_e_baixar_srop(
+                                session_state=st.session_state[cookie_key],
+                                url_consulta=url_consulta,
+                                url_pdf_template=url_pdf,
+                                data_inicial=data_ini_str,
+                                data_final=data_fim_str,
+                                temp_dir=temp_dir,
+                                status_callback=atualizar_status
+                            )
+                            
+                            if not pdf_paths:
+                                status_ui.update(label="Integração finalizada.", state="complete", expanded=True)
+                                st.warning("⚠️ Nenhum Boletim de Ocorrência foi retornado para o período selecionado.")
+                                st.session_state.pop(result_key, None)
+                            else:
+                                atualizar_status(f"Processando {len(pdf_paths)} arquivos PDF baixados...")
+                                
+                                # Carrega os mapeamentos e listas de bairros/municípios do banco de dados
+                                db_mappings = {
+                                    "mapa_upms": db.obter_mapeamento_upms(),
+                                    "mapa_nomes_mun": db.obter_mapeamento_nomes_municipios(),
+                                    "mapa_nomes_bai": db.obter_mapeamento_nomes_bairros(),
+                                    "mapa_alternativos_bai": db.obter_mapeamento_alternativo_bairros(),
+                                    "mapa_mun_todos": db.obter_municipios_com_bairro_todos_unico()
+                                }
+                                
+                                lista_municipios, bairros_por_mun = ex_bo.carregar_dados_banco()
+                                
+                                resultados = []
+                                for idx, pdf_path in enumerate(pdf_paths):
+                                    filename = os.path.basename(pdf_path)
+                                    atualizar_status(f"Analisando texto do BO {idx+1}/{len(pdf_paths)}: {filename}...")
+                                    
+                                    texto = ""
+                                    try:
+                                        texto = ex_bo.extrair_texto_pdf(pdf_path)
+                                    except Exception as e:
+                                        st.error(f"Erro ao extrair texto do PDF {filename}: {str(e)}")
+                                        
+                                    if not texto:
+                                        res = {
+                                            "ARQUIVO": filename,
+                                            "BO_NUMERO": "Erro na leitura",
+                                            "NARRATIVA": "Erro ao extrair texto do arquivo PDF.",
+                                            "PROVIDENCIAS": "NI"
+                                        }
+                                    else:
+                                        # Processa usando o analisador unificado do script extrair_bo
+                                        res = ex_bo.processar_texto_bo(
+                                            texto,
+                                            filename,
+                                            db_mappings,
+                                            lista_municipios,
+                                            bairros_por_mun
+                                        )
+                                    resultados.append(res)
+                                    
+                                # Compila tudo em um DataFrame e ordena
+                                df_res = pd.DataFrame(resultados)
+                                df_res = ex_bo.ordenar_dataframe(df_res)
+                                
+                                # Ajusta o índice para iniciar em 1 para visualização
+                                df_res.index = range(1, len(df_res) + 1)
+                                
+                                status_ui.update(label="Consulta e Extração concluídas com sucesso!", state="complete", expanded=True)
+                                
+                                # Guarda os resultados no session_state para persistir na tela após interações
+                                st.session_state[result_key] = df_res
+                                
+                                # Comprime os PDFs baixados em um arquivo ZIP e guarda na sessão
+                                import zipfile
+                                import io
+                                zip_buffer = io.BytesIO()
+                                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                                    for pdf_path in pdf_paths:
+                                        if os.path.exists(pdf_path):
+                                            zip_file.write(pdf_path, os.path.basename(pdf_path))
+                                
+                                st.session_state[f"zip_{result_key}"] = zip_buffer.getvalue()
+                                
+                                st.success(f"🎉 Extração concluída! {len(resultados)} boletins processados com sucesso.")
+                                
+                        except Exception as error_exec:
+                            status_ui.update(label="Ocorreu um erro na consulta.", state="error", expanded=True)
+                            err_str = str(error_exec)
+                            st.error(f"❌ {err_str}")
+                            # Se a sessão expirou, removemos o estado da sessão para forçar novo login
+                            if "Sessão expirada" in err_str:
+                                st.session_state.pop(cookie_key, None)
+                                st.warning("🔄 Sessão expirada no portal. Por favor, realize o login novamente.")
+                                st.rerun()
+                        finally:
+                            # Limpa os PDFs temporários do servidor
+                            if os.path.exists(temp_dir):
+                                shutil.rmtree(temp_dir, ignore_errors=True)
+            
+            # Exibe o resultado e o botão de download se houver dados no session_state
+            if result_key in st.session_state:
+                df_result = st.session_state[result_key]
+                
+                st.markdown("---")
+                st.subheader("📋 Boletins Extraídos da Consulta")
+                st.dataframe(df_result, width="stretch")
+                
+                # Gera o arquivo Excel para Download
+                import io
+                buffer_xlsx = io.BytesIO()
+                with pd.ExcelWriter(buffer_xlsx, engine='openpyxl') as writer:
+                    df_result.to_excel(writer, index=False, sheet_name='BOs_SROP')
+                    
+                dt_ini_lbl = "consulta"
+                dt_fim_lbl = "consulta"
+                if f"exec_dt_ini_{id_servico}" in st.session_state:
+                    dt_ini_lbl = st.session_state[f"exec_dt_ini_{id_servico}"].strftime('%d-%m-%Y')
+                if f"exec_dt_fim_{id_servico}" in st.session_state:
+                    dt_fim_lbl = st.session_state[f"exec_dt_fim_{id_servico}"].strftime('%d-%m-%Y')
+                
+                nome_download = f"SROP_BOs_Extraidos_{dt_ini_lbl}_a_{dt_fim_lbl}.xlsx"
+                
+                col_btn1, col_btn2 = st.columns(2)
+                
+                with col_btn1:
+                    st.download_button(
+                        label="📥 Baixar Planilha de BOs (.xlsx)",
+                        data=buffer_xlsx.getvalue(),
+                        file_name=nome_download,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key=f"btn_dl_srop_{id_servico}"
+                    )
+                    
+                with col_btn2:
+                    zip_key = f"zip_{result_key}"
+                    if zip_key in st.session_state:
+                        # O formato atualizado solicitado pelo usuário
+                        nome_zip = f"srop_bo_por_data_registro_{dt_ini_lbl}-{dt_fim_lbl}.zip"
+                        st.download_button(
+                            label="🗂️ Baixar PDFs Analisados (.zip)",
+                            data=st.session_state[zip_key],
+                            file_name=nome_zip,
+                            mime="application/zip",
+                            use_container_width=True,
+                            key=f"btn_dl_zip_{id_servico}"
+                        )

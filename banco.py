@@ -3,6 +3,8 @@ import pandas as pd
 from sqlalchemy import create_engine
 import unicodedata
 import os
+import json
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from cryptography.fernet import Fernet
 
@@ -699,6 +701,291 @@ def obter_municipios_com_bairro_todos_unico() -> dict:
         row = cursor.fetchone()
         if row:
             mapa_mun_todos[normalizar_texto(mun)] = row[0]
+        key_norm = (normalizar_texto(bai_clean), normalizar_texto(mun_clean))
+        if key_norm in existentes:
+            pulados += 1
+        else:
+            try:
+                cursor.execute(
+                    "INSERT INTO bairros (Bairro, Municipio) VALUES (?, ?)",
+                    (bai_clean, mun_clean)
+                )
+                existentes.add(key_norm)
+                inseridos += 1
+            except Exception:
+                erros += 1
+                
+    conn.commit()
+    conn.close()
+    return {"inseridos": inseridos, "pulados": pulados, "erros": erros}
+
+
+def importar_nomes_alternativos_lote(df: pd.DataFrame) -> dict:
+    """Importa nomes alternativos vinculando ao ID correto do Bairro Oficial"""
+    inseridos = 0
+    pulados = 0
+    erros = 0
+    
+    if df.empty:
+        return {"inseridos": inseridos, "pulados": pulados, "erros": erros}
+        
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    # 1. Mapeamento de Bairros Oficiais em memória (Bairro, Municipio) -> ID
+    cursor.execute("SELECT ID, Bairro, Municipio FROM bairros")
+    bairros_map = {(str(row[1]).strip().upper(), str(row[2]).strip().upper()): row[0] for row in cursor.fetchall()}
+    
+    # 2. Nomes alternativos existentes em memória (Bairro_ID, Nome_Alternativo)
+    cursor.execute("SELECT Bairro_ID, Nome_Alternativo FROM bairros_alternativos")
+    existentes = {(row[0], str(row[1]).strip().upper()) for row in cursor.fetchall()}
+    
+    # 3. Processa
+    for _, row in df.iterrows():
+        bairro_oficial = row.get("Bairro_Oficial")
+        municipio = row.get("Municipio")
+        nome_alt = row.get("Nome_Alternativo")
+        
+        if pd.isna(bairro_oficial) or pd.isna(municipio) or pd.isna(nome_alt):
+            erros += 1
+            continue
+            
+        bai_oficial_clean = str(bairro_oficial).strip().upper()
+        mun_clean = padronizar_municipio(municipio)
+        nome_alt_clean = str(nome_alt).strip().upper()
+        
+        key_bairro = (bai_oficial_clean, mun_clean.upper())
+        bairro_id = bairros_map.get(key_bairro)
+        
+        if not bairro_id:
+            # Bairro oficial não encontrado
+            erros += 1
+            continue
+            
+        key_alt = (bairro_id, nome_alt_clean)
+        if key_alt in existentes:
+            pulados += 1
+        else:
+            try:
+                cursor.execute(
+                    "INSERT INTO bairros_alternativos (Bairro_ID, Nome_Alternativo) VALUES (?, ?)",
+                    (bairro_id, nome_alt_clean)
+                )
+                existentes.add(key_alt)
+                inseridos += 1
+            except Exception:
+                erros += 1
+                
+    conn.commit()
+    conn.close()
+    return {"inseridos": inseridos, "pulados": pulados, "erros": erros}
+
+
+def importar_upms_lote(df: pd.DataFrame) -> dict:
+    """Importa UPMs, seus bairros originais e atualiza a tabela de relacionamentos (upm_bairros)"""
+    inseridos = 0
+    pulados = 0
+    erros = 0
+    
+    if df.empty:
+        return {"inseridos": inseridos, "pulados": pulados, "erros": erros}
+        
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    # 1. Carrega UPMs existentes em memória UPM -> ID
+    cursor.execute("SELECT ID, UPM FROM upms")
+    upms_map = {str(row[1]).strip().upper(): row[0] for row in cursor.fetchall()}
+    
+    # 2. Carrega Bairros existentes em memória (Bairro, Municipio) -> ID
+    cursor.execute("SELECT ID, Bairro, Municipio FROM bairros")
+    bairros_map = {(str(row[1]).strip().upper(), str(row[2]).strip().upper()): row[0] for row in cursor.fetchall()}
+    
+    # 3. Relacionamentos UPM_Bairro existentes em memória
+    cursor.execute("SELECT UPM_ID, Bairro_ID FROM upm_bairros")
+    rel_existentes = {(row[0], row[1]) for row in cursor.fetchall()}
+    
+    for _, row in df.iterrows():
+        upm = row.get("UPM")
+        descricao = row.get("Descricao", "")
+        bairro = row.get("Bairro")
+        municipio = row.get("Municipio")
+        estado = row.get("Estado", "MT")
+        
+        if pd.isna(upm) or not str(upm).strip() or pd.isna(bairro) or pd.isna(municipio):
+            erros += 1
+            continue
+            
+        upm_clean = str(upm).strip().upper()
+        desc_clean = str(descricao).strip() if not pd.isna(descricao) else ""
+        bai_clean = str(bairro).strip().upper()
+        mun_clean = padronizar_municipio(municipio)
+        est_clean = str(estado).strip().upper()
+        if len(est_clean) > 2 and " - " in est_clean:
+            est_clean = est_clean.split(" - ")[0].strip()
+            
+        # Insere ou busca ID da UPM
+        upm_id = upms_map.get(upm_clean)
+        if not upm_id:
+            try:
+                cursor.execute(
+                    "INSERT INTO upms (UPM, Descricao, Bairro, Municipio, Estado) VALUES (?, ?, ?, ?, ?)",
+                    (upm_clean, desc_clean, bai_clean, mun_clean, est_clean)
+                )
+                upm_id = cursor.lastrowid
+                upms_map[upm_clean] = upm_id
+                inseridos += 1
+            except Exception:
+                erros += 1
+                continue
+        else:
+            pulados += 1
+            
+        # Vínculo com o bairro
+        key_bairro = (bai_clean, mun_clean.upper())
+        bairro_id = bairros_map.get(key_bairro)
+        
+        if bairro_id and upm_id:
+            rel_key = (upm_id, bairro_id)
+            if rel_key not in rel_existentes:
+                try:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO upm_bairros (UPM_ID, Bairro_ID) VALUES (?, ?)",
+                        (upm_id, bairro_id)
+                    )
+                    rel_existentes.add(rel_key)
+                except Exception:
+                    pass
+                    
+    conn.commit()
+    conn.close()
+    return {"inseridos": inseridos, "pulados": pulados, "erros": erros}
+
+
+def obter_municipios_com_bairro_todos_unico() -> dict:
+    """
+    Retorna um dicionário mapeando municipio_normalizado -> UPM correspondente,
+    para os municípios que possuem apenas UM bairro cadastrado, e esse bairro é 'TODOS'.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    # 1. Busca contagem de bairros por município
+    query_contagem = """
+    SELECT Municipio, COUNT(*), MAX(Bairro)
+    FROM bairros
+    GROUP BY Municipio
+    """
+    cursor.execute(query_contagem)
+    municipios_elegiveis = []
+    for municipio, qtd_bairros, nome_bairro in cursor.fetchall():
+        if qtd_bairros == 1 and normalizar_texto(nome_bairro) == "todos":
+            municipios_elegiveis.append(municipio)
+            
+    # 2. Mapeia a UPM de cada município elegível
+    mapa_mun_todos = {}
+    for mun in municipios_elegiveis:
+        query_upm = """
+        SELECT u.UPM
+        FROM upms u
+        JOIN upm_bairros ub ON u.ID = ub.UPM_ID
+        JOIN bairros b ON ub.Bairro_ID = b.ID
+        WHERE LOWER(b.Bairro) = 'todos' AND LOWER(b.Municipio) = LOWER(?)
+        """
+        cursor.execute(query_upm, (mun,))
+        row = cursor.fetchone()
+        if row:
+            mapa_mun_todos[normalizar_texto(mun)] = row[0]
             
     conn.close()
     return mapa_mun_todos
+
+def listar_dados(tabela):
+    df = pd.read_sql(f"SELECT * FROM {tabela}", engine)
+    return df
+
+# =====================================================================
+# Gerenciamento de Sessão Persistente (SROP)
+# =====================================================================
+
+def salvar_sessao(servico_id: int, session_data: dict) -> None:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    # Data no formato Local/Sistema
+    agora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    data_str = json.dumps(session_data)
+    # Criptografa os dados antes de inserir no banco
+    data_cripto = criptografar_senha(data_str)
+    
+    # Encerra qualquer sessão ativa anterior do mesmo serviço
+    cursor.execute("UPDATE servicos_sessoes SET Status = 'Substituída' WHERE Servico_ID = ? AND Status = 'Ativa'", (servico_id,))
+    
+    # Insere sempre uma nova linha como 'Ativa'
+    cursor.execute("INSERT INTO servicos_sessoes (Servico_ID, Session_Data, Data_Login, Status) VALUES (?, ?, ?, 'Ativa')", (servico_id, data_cripto, agora))
+    conn.commit()
+    conn.close()
+
+def obter_sessao_ativa(servico_id: int) -> dict:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT ID, Session_Data, Data_Login FROM servicos_sessoes WHERE Servico_ID = ? AND Status = 'Ativa' ORDER BY ID DESC LIMIT 1", (servico_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return None
+        
+    sessao_db_id, session_data_cripto, data_login_str = row
+    
+    # Descriptografa os dados
+    session_data_str = descriptografar_senha(session_data_cripto)
+    if session_data_str == "Erro ao descriptografar":
+        # Fallback de segurança caso a sessão já estivesse gravada em texto puro antes da atualização
+        session_data_str = session_data_cripto
+    
+    # Valida regra de 4 horas
+    try:
+        data_login = datetime.strptime(data_login_str, '%Y-%m-%d %H:%M:%S')
+        limite = data_login + timedelta(hours=4)
+        if datetime.now() > limite:
+            # Sessão expirada
+            conn = sqlite3.connect(DB_FILE)
+            conn.execute("UPDATE servicos_sessoes SET Status = 'Expirada (4h)' WHERE ID = ?", (sessao_db_id,))
+            conn.commit()
+            conn.close()
+            return None
+            
+        # Adiciona a data de login no dicionário de retorno para a interface exibir
+        sessao_obj = json.loads(session_data_str)
+        return {
+            "cookies": sessao_obj,
+            "data_login": data_login
+        }
+    except Exception:
+        # Em caso de erro de parse, encerra por segurança
+        conn = sqlite3.connect(DB_FILE)
+        conn.execute("UPDATE servicos_sessoes SET Status = 'Erro Parse' WHERE ID = ?", (sessao_db_id,))
+        conn.commit()
+        conn.close()
+        return None
+
+def limpar_sessao(servico_id: int) -> None:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE servicos_sessoes SET Status = 'Encerrada' WHERE Servico_ID = ? AND Status = 'Ativa'", (servico_id,))
+    conn.commit()
+    conn.close()
+
+def excluir_historico_sessao(sessao_id: int) -> None:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM servicos_sessoes WHERE ID = ?", (sessao_id,))
+    conn.commit()
+    conn.close()
+
+def limpar_historico_inativo() -> None:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM servicos_sessoes WHERE Status != 'Ativa'")
+    conn.commit()
+    conn.close()
