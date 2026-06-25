@@ -14,27 +14,36 @@ db.inicializar_banco()
 st.markdown("""
     <style>
         div[data-testid="stSidebarUserContent"] div[role="radiogroup"] label {
-            background-color: #f8f9fa !important;
-            padding: 12px 16px !important;
-            border-radius: 8px !important;
-            margin-bottom: 8px !important;
-            border: 1px solid #e9ecef !important;
-            transition: all 0.2s ease-in-out !important;
+            background-color: rgba(248, 249, 250, 0.6) !important;
+            backdrop-filter: blur(10px);
+            padding: 12px 18px !important;
+            border-radius: 12px !important;
+            margin-bottom: 10px !important;
+            border: 1px solid rgba(233, 236, 239, 0.8) !important;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02) !important;
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
             cursor: pointer !important;
             width: 100% !important;
             display: flex !important;
             align-items: center !important;
         }
         div[data-testid="stSidebarUserContent"] div[role="radiogroup"] label:hover {
-            background-color: #e2e6ea !important;
-            border-color: #dae0e5 !important;
-            transform: translateX(4px);
+            background-color: rgba(255, 255, 255, 1) !important;
+            border-color: rgba(255, 75, 75, 0.3) !important;
+            transform: translateX(5px) translateY(-1px) !important;
+            box-shadow: 4px 4px 10px rgba(255, 75, 75, 0.1) !important;
         }
         div[data-testid="stSidebarUserContent"] div[role="radiogroup"] label[data-checked="true"] {
-            background-color: #ff4b4b !important;
+            background: linear-gradient(135deg, #ff4b4b 0%, #e82c2c 100%) !important;
             border-color: #ff4b4b !important;
             color: white !important;
-            font-weight: bold !important;
+            font-weight: 600 !important;
+            box-shadow: 0 4px 15px rgba(255, 75, 75, 0.4) !important;
+            transform: scale(1.02) !important;
+        }
+        div[data-testid="stSidebarUserContent"] div[role="radiogroup"] label[data-checked="true"]:hover {
+            transform: scale(1.03) translateX(3px) !important;
+            box-shadow: 0 6px 20px rgba(255, 75, 75, 0.6) !important;
         }
         div[data-testid="stSidebarUserContent"] div[role="radiogroup"] label span[data-testid="stRadioButtonChoiceIndicator"] {
             display: none !important;
@@ -42,6 +51,8 @@ st.markdown("""
         div[data-testid="stSidebarUserContent"] div[role="radiogroup"] label div[data-testid="stWidgetMarkdownInsideRadio"] {
             padding-left: 0px !important;
             margin-left: 0px !important;
+            font-size: 1.05rem !important;
+            letter-spacing: 0.3px !important;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -49,7 +60,7 @@ st.markdown("""
 # --- CONTROLE DE MENSAGENS E ESTADOS ---
 if "mensagem_sucesso" not in st.session_state: st.session_state.mensagem_sucesso = None
 if "menu_override" not in st.session_state: st.session_state.menu_override = None
-if "radio_selecionado" not in st.session_state: st.session_state.radio_selecionado = "Manutenção de Município"
+if "radio_selecionado" not in st.session_state: st.session_state.radio_selecionado = "🗺️ Manutenção de Municípios"
 
 if "sub_tela_mun" not in st.session_state: st.session_state.sub_tela_mun = "listar"
 if "sub_tela_bai" not in st.session_state: st.session_state.sub_tela_bai = "listar"
@@ -70,7 +81,7 @@ if "dados_sel_ser" not in st.session_state: st.session_state.dados_sel_ser = {"I
 st.sidebar.title("🤖 BuscaDados")
 st.sidebar.subheader("Menu Principal")
 
-opcoes_menu = ["Manutenção de Município", "Manutenção de Bairro", "Manutenção de UPMs", "Manutenção de Serviços", "Importação de Arquivo de Dados", "Extração de PDFs (BO)", "Carga e Configurações"]
+opcoes_menu = ["🗺️ Manutenção de Municípios", "🏘️ Manutenção de Bairros", "🏢 Manutenção de UPMs", "🔌 Manutenção de Serviços", "📥 Importar Dados Base", "🤖 Robô de Extração (BO)", "⚙️ Configurações"]
 
 # O index do radio deve ser baseado no que está em st.session_state.radio_selecionado, 
 # MAS se estivermos numa tela de serviço (override), o menu principal deve ficar "desmarcado"
@@ -136,7 +147,7 @@ if st.session_state.menu_override:
 # =====================================================================
 # 1. TELA: MANUTENÇÃO DE MUNICÍPIO (COMPLETA)
 # =====================================================================
-if menu == "Manutenção de Município":
+if menu == "🗺️ Manutenção de Municípios":
     st.title("📍 Manutenção de Município")
     
     if st.session_state.mensagem_sucesso:
@@ -239,7 +250,7 @@ if menu == "Manutenção de Município":
 # =====================================================================
 # 2. TELA: MANUTENÇÃO DE BAIRRO (COM FILTROS AVANÇADOS)
 # =====================================================================
-elif menu == "Manutenção de Bairro":
+elif menu == "🏘️ Manutenção de Bairros":
     st.title("🏡 Manutenção de Bairro")
     
     if st.session_state.mensagem_sucesso:
@@ -485,7 +496,7 @@ elif menu == "Manutenção de Bairro":
 # =====================================================================
 # 3. TELA: MANUTENÇÃO DE UPMS (COMPLETA)
 # =====================================================================
-elif menu == "Manutenção de UPMs":
+elif menu == "🏢 Manutenção de UPMs":
     st.title("🏢 Manutenção de UPMs")
     
     if st.session_state.mensagem_sucesso:
@@ -780,7 +791,7 @@ elif menu == "Manutenção de UPMs":
 # =====================================================================
 # 3.5. TELA: MANUTENÇÃO DE SERVIÇOS (COMPLETA)
 # =====================================================================
-elif menu == "Manutenção de Serviços":
+elif menu == "🔌 Manutenção de Serviços":
     st.title("🔌 Manutenção de Serviços")
     
     if st.session_state.mensagem_sucesso:
@@ -1079,7 +1090,7 @@ elif menu == "Manutenção de Serviços":
 # =====================================================================
 # 4. TELA: IMPORTAÇÃO DE ARQUIVO DE DADOS
 # =====================================================================
-elif menu == "Importação de Arquivo de Dados":
+elif menu == "📥 Importar Dados Base":
     st.title("📥 Importação de Arquivo de Dados")
     st.write("Suba uma planilha XLS ou XLSX contendo as colunas **Bairro** e **Municipio** para mapear e gerar a respectiva coluna de **UPM** automaticamente.")
     
@@ -1330,7 +1341,7 @@ elif menu == "Importação de Arquivo de Dados":
 # =====================================================================
 # 4.5. TELA: EXTRAÇÃO DE PDFs (BO)
 # =====================================================================
-elif menu == "Extração de PDFs (BO)":
+elif menu == "🤖 Robô de Extração (BO)":
     st.title("📥 Extração de Dados de BOs (PDF)")
     st.write("Faça o upload de um ou mais arquivos PDF de Boletins de Ocorrência para extrair dados automaticamente por seções e exportar o resultado para Excel.")
 
@@ -1425,7 +1436,7 @@ elif menu == "Extração de PDFs (BO)":
 # =====================================================================
 # 5. TELA: CARGA E CONFIGURAÇÕES
 # =====================================================================
-elif menu == "Carga e Configurações":
+elif menu == "⚙️ Configurações":
     st.title("⚙️ Carga e Configurações")
     
     st.write("Gerencie a base de dados do sistema, baixe o arquivo de modelo para preenchimento, realize cargas em lote ou limpe o banco de dados completamente.")
@@ -1584,7 +1595,7 @@ elif menu.startswith("servico_"):
             st.error("⚠️ Este serviço está inativo no momento. Ative-o na tela de Manutenção de Serviços para poder executá-lo.")
             if st.button("⬅️ Voltar para Manutenção de Serviços", key="btn_voltar_inativo", width="stretch"):
                 st.session_state.menu_override = None
-                st.session_state.radio_selecionado = "Manutenção de Serviços"
+                st.session_state.radio_selecionado = "🔌 Manutenção de Serviços"
                 st.rerun()
             st.stop()
         
