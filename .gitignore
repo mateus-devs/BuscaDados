@@ -15,4 +15,8 @@ env/
 # PDF input directories (prevents committing real BOs with sensitive personal info)
 dados_pdf/
 dados_pdf_temp/
-dados/
+dados/
+
+# Keycloak Binaries and Server Data
+keycloak-*/
+keycloak-*.zip

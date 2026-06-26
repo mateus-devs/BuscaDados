@@ -74,6 +74,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+import auth_utils
+
 # --- CONTROLE DE MENSAGENS E ESTADOS ---
 if "mensagem_sucesso" not in st.session_state: st.session_state.mensagem_sucesso = None
 if "menu_override" not in st.session_state: st.session_state.menu_override = None
@@ -94,11 +96,153 @@ if "dados_sel_bai" not in st.session_state: st.session_state.dados_sel_bai = {"I
 if "dados_sel_upm" not in st.session_state: st.session_state.dados_sel_upm = {"ID": None, "UPM": "", "Descricao": "", "Bairro": "", "Municipio": "", "Estado": ""}
 if "dados_sel_ser" not in st.session_state: st.session_state.dados_sel_ser = {"ID": None, "Nome": "", "UrlLogin": "", "UrlConsulta": "", "UrlPdf": "", "Login": "", "Senha": "", "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo", "Tempo_Expiracao_Horas": 4}
 
+# --- AUTENTICAÇÃO KEYCLOAK (O "PORTEIRO" DO SISTEMA) ---
+# Aqui começa a barreira de segurança. Tudo abaixo daqui só roda se a pessoa for autorizada.
+
+# 1. Cria o espaço na memória (sessão) para guardar o "Crachá" do usuário
+if "user_info" not in st.session_state:
+    st.session_state.user_info = None
+
+# 2. Quando o usuário volta do Keycloak (após digitar a senha), o Keycloak coloca um 'code' na barra de endereços
+query_params = st.query_params
+if "code" in query_params and not st.session_state.user_info:
+    code = query_params["code"]
+    
+    # 3. Manda esse código secreto de volta pro Keycloak (nos bastidores) em troca do Token de Acesso (Crachá)
+    token_response = auth_utils.exchange_code_for_token(code)
+    
+    if token_response and "access_token" in token_response:
+        access_token = token_response["access_token"]
+        id_token = token_response.get("id_token")
+        
+        # 4. Decodifica (abre) o crachá para ver quem é a pessoa e os cargos dela
+        decoded = auth_utils.decode_token(access_token)
+        user_info = auth_utils.get_user_info(decoded)
+        
+        if user_info:
+            user_info["id_token"] = id_token # Guarda para podermos fazer o Logout depois
+            st.session_state.user_info = user_info # Salva o usuário na memória!
+            
+            # 5. Limpa a barra de endereços (tira o ?code=...) e recarrega a página com o usuário logado
+            st.query_params.clear()
+            st.rerun()
+
+# 6. Se, depois de tudo, o usuário AINDA NÃO ESTIVER LOGADO (ou seja, acabou de entrar no site)
+if not st.session_state.user_info:
+    # --- DESIGN PREMIUM DA TELA DE LOGIN (STREAMLIT) ---
+    st.markdown("""
+        <style>
+            /* Esconde a barra lateral, menu superior e rodapé na tela de login para focar 100% no cartão */
+            [data-testid="collapsedControl"] { display: none; }
+            [data-testid="stHeader"] { display: none; }
+            footer { display: none; }
+            
+            /* Centralização e background */
+            .main {
+                background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            }
+            
+            /* Estilo do Cartão Neumórfico (Efeito de relevo/vidro) */
+            .login-card {
+                background: rgba(255, 255, 255, 0.9);
+                backdrop-filter: blur(10px);
+                padding: 50px 40px;
+                border-radius: 24px;
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0,0,0,0.05);
+                text-align: center;
+                border: 1px solid rgba(255, 255, 255, 0.5);
+                margin-top: 5vh;
+            }
+            
+            .login-icon {
+                font-size: 60px;
+                margin-bottom: -15px;
+                animation: float 3s ease-in-out infinite;
+            }
+            
+            .login-title {
+                font-size: 38px;
+                font-weight: 900;
+                color: #1E293B;
+                letter-spacing: -1px;
+                margin-bottom: 5px;
+            }
+            
+            .login-subtitle {
+                color: #64748B;
+                font-size: 16px;
+                font-weight: 500;
+                margin-bottom: 35px;
+            }
+            
+            .login-divider {
+                height: 1px;
+                background: linear-gradient(90deg, transparent, rgba(255, 75, 75, 0.3), transparent);
+                margin: 25px 0;
+            }
+            
+            @keyframes float {
+                0% { transform: translateY(0px); }
+                50% { transform: translateY(-10px); }
+                100% { transform: translateY(0px); }
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Layout de 3 colunas para forçar o cartão a ficar centralizado
+    _, col_center, _ = st.columns([1, 1.5, 1])
+    
+    with col_center:
+        st.markdown("""
+            <div class="login-card">
+                <div class="login-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="68" height="68" viewBox="0 0 24 24" fill="none" stroke="url(#grad1)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <defs>
+                            <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#2563EB;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#6366F1;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        <circle cx="12" cy="16" r="1" fill="#2563EB"></circle>
+                    </svg>
+                </div>
+                <div class="login-title">BuscaDados</div>
+                <div class="login-subtitle">Plataforma Segura de Extração de Dados</div>
+                <div class="login-divider"></div>
+                <p style="color: #94A3B8; font-size: 14px; margin-bottom: 25px;">
+                    Ambiente restrito. O acesso é monitorado e requer autenticação via SSO (Single Sign-On).
+                </p>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # O botão fica fora do markdown para manter a interatividade do Python/Streamlit
+        login_url = auth_utils.get_login_url()
+        st.link_button("🔐 ACESSAR SISTEMA", login_url, type="primary", use_container_width=True)
+        
+        st.markdown("<br><p style='text-align: center; color: #94A3B8; font-size: 12px;'>© 2024 BuscaDados. Todos os direitos reservados.</p>", unsafe_allow_html=True)
+
+    # MATA A EXECUÇÃO AQUI! O código do Streamlit para nesta linha.
+    st.stop() 
+
+# 7. Se o código chegou até aqui, é porque a pessoa ESTÁ LOGADA!
+user = st.session_state.user_info
+is_admin = user.get("is_admin", False)
+
 # --- MENU LATERAL ESQUERDO ---
 st.sidebar.title("🤖 BuscaDados")
 st.sidebar.subheader("Menu Principal")
 
 opcoes_menu = ["🗺️ Manutenção de Municípios", "🏘️ Manutenção de Bairros", "🏢 Manutenção de UPMs", "🔌 Manutenção de Serviços", "📥 Importar Dados Base", "🤖 Robô de Extração (BO)", "⚙️ Configurações"]
+
+# --- CONTROLE DE ACESSO BASEADO EM PAPEL (RBAC) ---
+# Se o usuário NÃO for Administrador (ou seja, é um Operador), ele sofre uma restrição.
+if not is_admin:
+    # Sobrescrevemos a lista de menus para ter APENAS a extração. Todo o resto some!
+    opcoes_menu = ["🤖 Robô de Extração (BO)"]
+    if st.session_state.radio_selecionado not in opcoes_menu:
+        st.session_state.radio_selecionado = "🤖 Robô de Extração (BO)"
 
 # O index do radio deve ser baseado no que está em st.session_state.radio_selecionado, 
 # MAS se estivermos numa tela de serviço (override), o menu principal deve ficar "desmarcado"
@@ -147,6 +291,11 @@ if not df_servicos_sidebar.empty:
         st.sidebar.info("Nenhum serviço ativo cadastrado.")
 else:
     st.sidebar.info("Nenhum serviço cadastrado.")
+
+st.sidebar.markdown("<hr style='margin: 15px 0px 15px 0px;'>", unsafe_allow_html=True)
+st.sidebar.write(f"👤 Logado como: **{user['name']}**")
+logout_url = auth_utils.get_logout_url(user.get("id_token", ""))
+st.sidebar.link_button("Sair do Sistema (Logout)", logout_url, use_container_width=True)
 
 # Se um serviço estiver ativo via override, vamos injetar CSS para desmarcar visualmente o radio button
 if st.session_state.menu_override:

@@ -1,0 +1,107 @@
+{
+  "id": "buscadados",
+  "realm": "buscadados",
+  "displayName": "Sistema BuscaDados",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "Admin",
+        "description": "Acesso total ao sistema e configuracoes"
+      },
+      {
+        "name": "Operador",
+        "description": "Acesso apenas a extracao de BOs"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "buscadados-app",
+      "name": "BuscaDados Streamlit App",
+      "enabled": true,
+      "alwaysDisplayInConsole": false,
+      "clientAuthenticatorType": "client-secret",
+      "redirectUris": [
+        "http://localhost:8501/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8501",
+        "+"
+      ],
+      "notBefore": 0,
+      "bearerOnly": false,
+      "consentRequired": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "publicClient": true,
+      "frontchannelLogout": true,
+      "protocol": "openid-connect",
+      "attributes": {
+        "oidc.ciba.grant.enabled": "false",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "false",
+        "post.logout.redirect.uris": "http://localhost:8501/*"
+      },
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "roles",
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@buscadados.com",
+      "firstName": "Administrador",
+      "lastName": "Master",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "Admin"
+      ]
+    },
+    {
+      "username": "operador",
+      "enabled": true,
+      "email": "operador@buscadados.com",
+      "firstName": "Operador",
+      "lastName": "Padrao",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "operador",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "Operador"
+      ]
+    }
+  ]
+}
