@@ -94,7 +94,7 @@ if "modo_form_ser" not in st.session_state: st.session_state.modo_form_ser = "ca
 if "dados_sel_mun" not in st.session_state: st.session_state.dados_sel_mun = {"ID": None, "Municipio": "", "Estado": "MT - Mato Grosso"}
 if "dados_sel_bai" not in st.session_state: st.session_state.dados_sel_bai = {"ID": None, "Bairro": "", "Municipio": ""}
 if "dados_sel_upm" not in st.session_state: st.session_state.dados_sel_upm = {"ID": None, "UPM": "", "Descricao": "", "Bairro": "", "Municipio": "", "Estado": ""}
-if "dados_sel_ser" not in st.session_state: st.session_state.dados_sel_ser = {"ID": None, "Nome": "", "UrlLogin": "", "UrlConsulta": "", "UrlPdf": "", "Login": "", "Senha": "", "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo", "Tempo_Expiracao_Horas": 4}
+if "dados_sel_ser" not in st.session_state: st.session_state.dados_sel_ser = {"ID": None, "Nome": "", "UrlLogin": "", "UrlConsulta": "", "UrlPdf": "", "Login": "", "Senha": "", "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo", "Tempo_Expiracao_Horas": 4, "Layout_ID": 1}
 
 # --- AUTENTICAÇÃO KEYCLOAK (O "PORTEIRO" DO SISTEMA) ---
 # Aqui começa a barreira de segurança. Tudo abaixo daqui só roda se a pessoa for autorizada.
@@ -217,9 +217,25 @@ if not st.session_state.user_info:
             </div>
         """, unsafe_allow_html=True)
         
-        # O botão fica fora do markdown para manter a interatividade do Python/Streamlit
         login_url = auth_utils.get_login_url()
-        st.link_button("🔐 ACESSAR SISTEMA", login_url, type="primary", use_container_width=True)
+        # st.link_button("🔐 ACESSAR SISTEMA", login_url, type="primary", use_container_width=True)
+        st.markdown(f"""
+            <a href="{login_url}" target="_self" style="
+                display: block;
+                width: 100%;
+                background-color: #ff4b4b;
+                color: white;
+                text-align: center;
+                padding: 10px 0;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: 500;
+                text-decoration: none;
+                border: 1px solid transparent;
+            " onmouseover="this.style.backgroundColor='#ff3333'" onmouseout="this.style.backgroundColor='#ff4b4b'">
+                🔐 ACESSAR SISTEMA
+            </a>
+        """, unsafe_allow_html=True)
         
         st.markdown("<br><p style='text-align: center; color: #94A3B8; font-size: 12px;'>© 2024 BuscaDados. Todos os direitos reservados.</p>", unsafe_allow_html=True)
 
@@ -234,7 +250,7 @@ is_admin = user.get("is_admin", False)
 st.sidebar.title("🤖 BuscaDados")
 st.sidebar.subheader("Menu Principal")
 
-opcoes_menu = ["🗺️ Manutenção de Municípios", "🏘️ Manutenção de Bairros", "🏢 Manutenção de UPMs", "🔌 Manutenção de Serviços", "📥 Importar Dados Base", "🤖 Robô de Extração (BO)", "⚙️ Configurações"]
+opcoes_menu = ["🏙️ Manutenção de Municípios", "🏘️ Manutenção de Bairros", "🚔 Manutenção de UPMs", "🌐 Manutenção de Serviços", "📄 Manutenção de Layouts", "⚡ Tratar Planilha (Injetar UPM)", "🤖 Robô de Extração (BO)", "⚙️ Configurações"]
 
 # --- CONTROLE DE ACESSO BASEADO EM PAPEL (RBAC) ---
 # Se o usuário NÃO for Administrador (ou seja, é um Operador), ele sofre uma restrição.
@@ -313,7 +329,7 @@ if st.session_state.menu_override:
 # =====================================================================
 # 1. TELA: MANUTENÇÃO DE MUNICÍPIO (COMPLETA)
 # =====================================================================
-if menu == "🗺️ Manutenção de Municípios":
+if menu == "🏙️ Manutenção de Municípios":
     st.title("📍 Manutenção de Município")
     
     if st.session_state.mensagem_sucesso:
@@ -488,11 +504,23 @@ elif menu == "🏘️ Manutenção de Bairros":
                     lista_mun_filtro = ["Todos os Municípios"]
                     if not df_mun_existentes.empty:
                         lista_mun_filtro.extend(df_mun_existentes["Municipio"].unique().tolist())
+                    
+                    if "mem_filtro_bai_mun" not in st.session_state:
+                        st.session_state.mem_filtro_bai_mun = "Todos os Municípios"
+                    idx_mun = 0
+                    if st.session_state.mem_filtro_bai_mun in lista_mun_filtro:
+                        idx_mun = lista_mun_filtro.index(st.session_state.mem_filtro_bai_mun)
+                        
                     # Reduzimos o rótulo incluindo um emoji para um visual mais limpo
-                    municipio_filtrado = st.selectbox("🏙️ Filtrar por Município", lista_mun_filtro, key="filtro_mun_bai")
+                    municipio_filtrado = st.selectbox("🏙️ Filtrar por Município", lista_mun_filtro, index=idx_mun, key="filtro_mun_bai")
+                    st.session_state.mem_filtro_bai_mun = municipio_filtrado
                     
                 with col_filtro_txt:
-                    texto_filtrado = st.text_input("🔍 Digite o nome do Bairro para pesquisar...", key="filtro_txt_bai").strip()
+                    if "mem_filtro_bai_txt" not in st.session_state:
+                        st.session_state.mem_filtro_bai_txt = ""
+                        
+                    texto_filtrado = st.text_input("🔍 Digite o nome do Bairro para pesquisar...", value=st.session_state.mem_filtro_bai_txt, key="filtro_txt_bai").strip()
+                    st.session_state.mem_filtro_bai_txt = texto_filtrado
             
             st.markdown("<hr style='margin: 10px 0px 20px 0px; border-color: #f0f2f6;'>", unsafe_allow_html=True)
             
@@ -735,8 +763,8 @@ elif menu == "🏘️ Manutenção de Bairros":
 # =====================================================================
 # 3. TELA: MANUTENÇÃO DE UPMS (COMPLETA)
 # =====================================================================
-elif menu == "🏢 Manutenção de UPMs":
-    st.title("🏢 Manutenção de UPMs")
+elif menu == "🚔 Manutenção de UPMs":
+    st.title("🚔 Manutenção de UPMs")
     
     if st.session_state.mensagem_sucesso:
         st.success(st.session_state.mensagem_sucesso)
@@ -1061,8 +1089,8 @@ elif menu == "🏢 Manutenção de UPMs":
 # =====================================================================
 # 3.5. TELA: MANUTENÇÃO DE SERVIÇOS (COMPLETA)
 # =====================================================================
-elif menu == "🔌 Manutenção de Serviços":
-    st.title("🔌 Manutenção de Serviços")
+elif menu == "🌐 Manutenção de Serviços":
+    st.title("🌐 Manutenção de Serviços")
     
     if st.session_state.mensagem_sucesso:
         st.success(st.session_state.mensagem_sucesso)
@@ -1075,7 +1103,7 @@ elif menu == "🔌 Manutenção de Serviços":
             st.session_state.modo_form_ser = "cadastro"
             st.session_state.dados_sel_ser = {
                 "ID": None, "Nome": "", "UrlLogin": "", "UrlConsulta": "", "UrlPdf": "", "Login": "", "Senha": "",
-                "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo"
+                "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo", "Layout_ID": 1
             }
             st.rerun()
             
@@ -1119,6 +1147,7 @@ elif menu == "🔌 Manutenção de Serviços":
                 tipo_servico = row.get("Tipo", "SROP")
                 status_servico = row.get("Status", "Ativo")
                 tempo_expiracao = row.get("Tempo_Expiracao_Horas", 4)
+                layout_id_db = row.get("Layout_ID", 1)
                 
                 c_id, c_nome, c_status, c_vis, c_edt, c_exc = st.columns([0.8, 3, 2, 1.2, 1.2, 1.8])
                 c_id.write(f"`{id_atual}`")
@@ -1139,7 +1168,8 @@ elif menu == "🔌 Manutenção de Serviços":
                         "Senha": db.descriptografar_senha(senha_cripto),
                         "DuplaAutenticacao": dupla_autenticacao,
                         "Tipo": tipo_servico, "Status": status_servico,
-                        "Tempo_Expiracao_Horas": tempo_expiracao
+                        "Tempo_Expiracao_Horas": tempo_expiracao,
+                        "Layout_ID": layout_id_db
                     }
                     st.rerun()
                     
@@ -1152,7 +1182,8 @@ elif menu == "🔌 Manutenção de Serviços":
                         "Senha": db.descriptografar_senha(senha_cripto),
                         "DuplaAutenticacao": dupla_autenticacao,
                         "Tipo": tipo_servico, "Status": status_servico,
-                        "Tempo_Expiracao_Horas": tempo_expiracao
+                        "Tempo_Expiracao_Horas": tempo_expiracao,
+                        "Layout_ID": layout_id_db
                     }
                     st.rerun()
                     
@@ -1165,7 +1196,8 @@ elif menu == "🔌 Manutenção de Serviços":
                         "Senha": db.descriptografar_senha(senha_cripto),
                         "DuplaAutenticacao": dupla_autenticacao,
                         "Tipo": tipo_servico, "Status": status_servico,
-                        "Tempo_Expiracao_Horas": tempo_expiracao
+                        "Tempo_Expiracao_Horas": tempo_expiracao,
+                        "Layout_ID": layout_id_db
                     }
                     st.rerun()
                     
@@ -1213,6 +1245,19 @@ elif menu == "🔌 Manutenção de Serviços":
         idx_dupla = lista_dupla.index(dados["DuplaAutenticacao"]) if dados.get("DuplaAutenticacao") in lista_dupla else 0
         nova_dupla = st.selectbox("Dupla Autenticação", lista_dupla, index=idx_dupla, disabled=campos_bloqueados, key="input_ser_dupla")
         
+        st.write("")
+        novo_tempo_expiracao = st.number_input("Tempo Máximo de Sessão (Horas)", min_value=1, max_value=24, value=dados.get("Tempo_Expiracao_Horas", 4), disabled=campos_bloqueados, key="input_ser_tempo")
+        
+        st.write("")
+        df_layouts = db.listar_layouts()
+        lista_layouts = df_layouts["Nome_Layout"].tolist() if not df_layouts.empty else ["Layout Genérico Padrão"]
+        id_atual_layout = dados.get("Layout_ID", 1)
+        nome_atual_layout = df_layouts[df_layouts["ID"] == id_atual_layout]["Nome_Layout"].values[0] if not df_layouts.empty and id_atual_layout in df_layouts["ID"].values else lista_layouts[0]
+        idx_layout = lista_layouts.index(nome_atual_layout) if nome_atual_layout in lista_layouts else 0
+        
+        novo_layout_nome = st.selectbox("Layout de Extração (OCR)", lista_layouts, index=idx_layout, disabled=campos_bloqueados, key="input_ser_layout")
+        novo_layout_id = int(df_layouts[df_layouts["Nome_Layout"] == novo_layout_nome]["ID"].values[0]) if not df_layouts.empty else 1
+        
         lista_tipo = ["SROP"]
         idx_tipo = lista_tipo.index(dados["Tipo"]) if dados.get("Tipo") in lista_tipo else 0
         novo_tipo = st.selectbox("Tipo", lista_tipo, index=idx_tipo, disabled=campos_bloqueados, key="input_ser_tipo")
@@ -1220,9 +1265,6 @@ elif menu == "🔌 Manutenção de Serviços":
         lista_status = ["Ativo", "Inativo"]
         idx_status = lista_status.index(dados["Status"]) if dados.get("Status") in lista_status else 0
         novo_status = st.selectbox("Situação", lista_status, index=idx_status, disabled=campos_bloqueados, key="input_ser_status")
-        
-        st.write("")
-        novo_tempo_expiracao = st.number_input("Tempo Máximo de Sessão (Horas)", min_value=1, max_value=24, value=dados.get("Tempo_Expiracao_Horas", 4), disabled=campos_bloqueados, key="input_ser_tempo")
         
         st.write("")
         if modo == "cadastro":
@@ -1233,7 +1275,7 @@ elif menu == "🔌 Manutenção de Serviços":
                         "Nome": novo_nome, "UrlLogin": nova_url_login, "UrlConsulta": nova_url_consulta,
                         "UrlPdf": nova_url_pdf, "Login": novo_login, "Senha": nova_senha,
                         "DuplaAutenticacao": nova_dupla, "Tipo": novo_tipo, "Status": novo_status,
-                        "Tempo_Expiracao_Horas": novo_tempo_expiracao
+                        "Tempo_Expiracao_Horas": novo_tempo_expiracao, "Layout_ID": novo_layout_id
                     })
                     if sucesso:
                         st.session_state.sub_tela_ser = "listar"
@@ -1256,8 +1298,8 @@ elif menu == "🔌 Manutenção de Serviços":
                     cursor = conn.cursor()
                     senha_criptografada = db.criptografar_senha(nova_senha)
                     cursor.execute(
-                        "UPDATE servicos SET Nome = ?, UrlLogin = ?, UrlConsulta = ?, UrlPdf = ?, Login = ?, Senha = ?, DuplaAutenticacao = ?, Tipo = ?, Status = ?, Tempo_Expiracao_Horas = ? WHERE ID = ?",
-                        (novo_nome, nova_url_login, nova_url_consulta, nova_url_pdf, novo_login, senha_criptografada, nova_dupla, novo_tipo, novo_status, novo_tempo_expiracao, dados["ID"])
+                        "UPDATE servicos SET Nome = ?, UrlLogin = ?, UrlConsulta = ?, UrlPdf = ?, Login = ?, Senha = ?, DuplaAutenticacao = ?, Tipo = ?, Status = ?, Tempo_Expiracao_Horas = ?, Layout_ID = ? WHERE ID = ?",
+                        (novo_nome, nova_url_login, nova_url_consulta, nova_url_pdf, novo_login, senha_criptografada, nova_dupla, novo_tipo, novo_status, novo_tempo_expiracao, novo_layout_id, dados["ID"])
                     )
                     conn.commit()
                     conn.close()
@@ -1389,13 +1431,230 @@ elif menu == "🔌 Manutenção de Serviços":
 
 
 # =====================================================================
+# TELA: MANUTENÇÃO DE LAYOUTS
+# =====================================================================
+elif menu == "📄 Manutenção de Layouts":
+    st.title("📄 Manutenção de Layouts (OCR Dinâmico)")
+    st.info("Crie moldes dinâmicos para a extração inteligente de dados dos Boletins de Ocorrência.")
+    
+    # 1. Escolher ou Criar Layout
+    col_l1, col_l2 = st.columns([3, 1])
+    layouts_df = db.listar_layouts()
+    opcoes_layout = ["-- Selecione um Layout --", "➕ Criar Novo Layout..."]
+    
+    if not layouts_df.empty:
+        opcoes_layout.extend(layouts_df["Nome_Layout"].tolist())
+        
+    idx_default = 2 if len(layouts_df) == 1 else 0
+    layout_selecionado = col_l1.selectbox("Selecione o Layout", opcoes_layout, index=idx_default)
+    
+    if layout_selecionado == "➕ Criar Novo Layout...":
+        with st.form("form_novo_layout"):
+            novo_nome = st.text_input("Nome do Novo Layout")
+            if st.form_submit_button("Salvar Layout"):
+                if db.salvar_layout(novo_nome):
+                    st.success("Layout criado com sucesso!")
+                    st.rerun()
+                else:
+                    st.error("Erro ao salvar ou Layout já existe.")
+    
+    elif layout_selecionado != "-- Selecione um Layout --":
+        # Pega o ID do layout selecionado
+        layout_id = int(layouts_df[layouts_df["Nome_Layout"] == layout_selecionado]["ID"].values[0])
+        
+        # Botão de exclusão do layout
+        with col_l2:
+            st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+            if st.button("🗑️ Excluir Layout Inteiro", use_container_width=True):
+                if db.excluir_layout(layout_id):
+                    st.success("Layout excluído!")
+                    st.rerun()
+                else:
+                    st.error("Não é possível excluir este layout (está em uso por algum serviço).")
+        
+        st.markdown("---")
+        
+        grupos_df = db.listar_grupos(layout_id)
+        
+        # 2. Dashboard Header (Metrics)
+        m_col1, m_col2, m_col3 = st.columns(3)
+        m_col1.metric("Total de Grupos", len(grupos_df))
+        
+        total_itens = 0
+        if not grupos_df.empty:
+            for _, r in grupos_df.iterrows():
+                if r["Tem_Itens"]:
+                    total_itens += len(db.listar_itens(r["ID"]))
+        m_col2.metric("Total de Itens", total_itens)
+        
+        st.write("")
+        
+        # 3. Formulário para novo grupo
+        with st.expander("➕ Adicionar Novo Grupo", expanded=grupos_df.empty):
+            with st.form("form_novo_grupo", clear_on_submit=True):
+                g_col1, g_col2, g_col3 = st.columns([2, 1, 1])
+                novo_grupo = g_col1.text_input("Nome do Grupo (Ex: VÍTIMA)")
+                ordem_grupo = g_col2.number_input("Ordem de Exibição", min_value=1, value=1)
+                tem_itens = g_col3.checkbox("Tem Sub-itens?", value=True, help="Desmarque se o grupo for apenas um texto direto sem chave-valor.")
+                
+                if st.form_submit_button("Salvar Grupo"):
+                    if db.salvar_grupo(layout_id, novo_grupo, ordem_grupo, 1 if tem_itens else 0):
+                        st.success("Grupo adicionado!")
+                        st.rerun()
+                    else:
+                        st.error("Erro ao salvar ou Grupo já existe neste layout.")
+                        
+        st.write("")
+        
+        # 4. Renderiza os grupos em Expanders (Acordeão)
+        if not grupos_df.empty:
+            for index, row_g in grupos_df.iterrows():
+                grupo_id = row_g["ID"]
+                grupo_nome = row_g["Nome_Grupo"]
+                grupo_ordem = row_g["Ordem"]
+                grupo_tem_itens = row_g["Tem_Itens"]
+                
+                # Cada grupo é um card colapsável
+                with st.expander(f"📁 {grupo_ordem}. {grupo_nome}", expanded=False):
+                    
+                    editando_g = st.session_state.get(f"edit_g_{grupo_id}", False)
+                    if editando_g:
+                        st.markdown("**Editar Grupo:**")
+                        ge_col1, ge_col2, ge_col3, ge_col4 = st.columns([2, 1, 1, 1])
+                        g_new_nome = ge_col1.text_input("Nome Grupo", value=grupo_nome, key=f"gn_{grupo_id}")
+                        g_new_ordem = ge_col2.number_input("Ordem", value=int(grupo_ordem), min_value=1, key=f"go_{grupo_id}")
+                        g_new_tem_itens = ge_col3.checkbox("Tem Sub-itens?", value=bool(grupo_tem_itens), key=f"gt_{grupo_id}")
+                        
+                        ge_btn1, ge_btn2 = ge_col4.columns(2)
+                        st.write("") # spacer
+                        if ge_btn1.button("💾 Salvar", key=f"gsv_{grupo_id}", help="Salvar Grupo"):
+                            if db.atualizar_grupo(grupo_id, layout_id, g_new_nome, g_new_ordem, 1 if g_new_tem_itens else 0):
+                                st.session_state[f"edit_g_{grupo_id}"] = False
+                                st.rerun()
+                            else:
+                                st.error("Erro ou Nome já existe!")
+                        if ge_btn2.button("❌ Cancelar", key=f"gcc_{grupo_id}", help="Cancelar Edição"):
+                            st.session_state[f"edit_g_{grupo_id}"] = False
+                            st.rerun()
+                        st.write("")
+                    else:
+                        _, col_edt_g, col_del_g = st.columns([6, 1.5, 2.5])
+                        if col_edt_g.button("✏️ Editar Grupo", key=f"edt_g_{grupo_id}", use_container_width=True):
+                            st.session_state[f"edit_g_{grupo_id}"] = True
+                            st.rerun()
+                        if col_del_g.button(f"🗑️ Excluir Grupo Inteiro", key=f"del_g_{grupo_id}", use_container_width=True):
+                            db.excluir_grupo(grupo_id)
+                            st.rerun()
+                        st.write("")
+                    
+                    if grupo_tem_itens:
+                        itens_df = db.listar_itens(grupo_id)
+                        
+                        # Formulario de novo item escondido dentro de um expander secundário
+                        with st.expander("➕ Adicionar Novo Item", expanded=itens_df.empty):
+                            with st.form(f"form_item_{grupo_id}", clear_on_submit=True):
+                                i_col1, i_col2, i_col3, i_col4 = st.columns([2, 2, 1, 1])
+                                nome_excel = i_col1.text_input("Coluna Excel (Destino)", help="Nome da coluna que será gerada no Excel")
+                                palavra_busca = i_col2.text_input("Palavra Busca (PDF)", help="Dica: Use a barra | para diferenciar palavras repetidas. Exemplo: UF|Naturalidade")
+                                ordem_item = i_col3.number_input("Ordem", min_value=1, value=1, help="Ordem de extração deste item no PDF")
+                                
+                                i_col4.markdown("<div style='margin-top: 36px;'></div>", unsafe_allow_html=True)
+                                exportar_excel_bool = i_col4.checkbox("Exportar para Excel", value=True, help="Se desmarcado, este item servirá apenas como barreira de busca, mas não será gerado como coluna no arquivo Excel final.")
+                                
+                                if st.form_submit_button("Salvar Item"):
+                                    exportar_excel = 1 if exportar_excel_bool else 0
+                                    if db.salvar_item(layout_id, grupo_id, nome_excel, palavra_busca, ordem_item, exportar_excel):
+                                        st.success("Item adicionado!")
+                                        st.rerun()
+                                    else:
+                                        st.error("Nome da coluna já existe neste layout ou campos inválidos!")
+                        
+                        # Grid de exibição dos itens (Tabela simulada com colunas)
+                        if not itens_df.empty:
+                            st.write("") # Espaçamento top
+                            c_title, c_bt1, c_bt2 = st.columns([5, 2.5, 2.5])
+                            c_title.markdown("**Itens de Extração Cadastrados:**")
+                            
+                            def toggle_all_items(gid, state):
+                                df_items = db.listar_itens(gid)
+                                for _, r in df_items.iterrows():
+                                    iid = int(r['ID'])
+                                    db.atualizar_exportacao_item(iid, state)
+                                    st_key = f"q_nx_{iid}"
+                                    if st_key in st.session_state:
+                                        st.session_state[st_key] = bool(state)
+                                    
+                            if c_bt1.button("✅ Marcar Todos", key=f"marcar_tds_{grupo_id}", use_container_width=True, on_click=toggle_all_items, args=(grupo_id, 1)):
+                                pass
+                                
+                            if c_bt2.button("❌ Desmarcar Todos", key=f"desmarcar_tds_{grupo_id}", use_container_width=True, on_click=toggle_all_items, args=(grupo_id, 0)):
+                                pass
+                            
+                            st.write("") # Espaçamento bot
+                            
+                            # Cabeçalhos
+                            h_col1, h_col2, h_col3, h_colE, h_col4 = st.columns([1, 2.5, 2.5, 1.5, 1])
+                            h_col1.markdown("**Ordem**")
+                            h_col2.markdown("**Coluna Excel**")
+                            h_col3.markdown("**Palavra Busca (PDF)**")
+                            h_colE.markdown("**Exportar no Excel**")
+                            h_col4.markdown("**Ação**")
+                            st.markdown("<hr style='margin: 5px 0; padding: 0;'>", unsafe_allow_html=True)
+                            
+                            # Linhas
+                            for _, row_i in itens_df.iterrows():
+                                item_id = row_i['ID']
+                                editando = st.session_state.get(f"edit_i_{item_id}", False)
+                                
+                                if editando:
+                                    e_col1, e_col2, e_col3, e_colE, e_col4, e_col5 = st.columns([1, 2.5, 2.5, 1.5, 0.5, 0.5])
+                                    n_ordem = e_col1.number_input("Ordem", value=int(row_i['Ordem']), min_value=1, key=f"no_{item_id}", label_visibility="collapsed")
+                                    n_excel = e_col2.text_input("Excel", value=row_i['Nome_Item_Excel'], key=f"ne_{item_id}", label_visibility="collapsed")
+                                    n_busca = e_col3.text_input("Busca", value=row_i['Palavra_Busca'], key=f"nb_{item_id}", label_visibility="collapsed", help="Dica: Use a barra | para diferenciar palavras repetidas.")
+                                    n_export = e_colE.checkbox("Sim", value=bool(row_i.get('Exportar_Excel', 1)), key=f"nx_{item_id}")
+                                    
+                                    if e_col4.button("💾", key=f"sv_{item_id}", help="Salvar Edição"):
+                                        if db.atualizar_item(item_id, layout_id, n_excel, n_busca, n_ordem, 1 if n_export else 0):
+                                            st.session_state[f"edit_i_{item_id}"] = False
+                                            st.rerun()
+                                        else:
+                                            st.error("Erro ou Coluna já existe!")
+                                            
+                                    if e_col5.button("❌", key=f"cc_{item_id}", help="Cancelar Edição"):
+                                        st.session_state[f"edit_i_{item_id}"] = False
+                                        st.rerun()
+                                else:
+                                    r_col1, r_col2, r_col3, r_colE, r_col4, r_col5 = st.columns([1, 2.5, 2.5, 1.5, 0.5, 0.5])
+                                    r_col1.write(f"#{row_i['Ordem']}")
+                                    r_col2.markdown(f"`{row_i['Nome_Item_Excel']}`")
+                                    r_col3.markdown(f"`{row_i['Palavra_Busca']}`")
+                                    def toggle_single_item(iid, st_key):
+                                        new_val = st.session_state[st_key]
+                                        db.atualizar_exportacao_item(int(iid), 1 if new_val else 0)
+                                        
+                                    is_export = bool(row_i.get('Exportar_Excel', 1))
+                                    r_colE.checkbox("Exp", value=is_export, key=f"q_nx_{item_id}", label_visibility="collapsed", on_change=toggle_single_item, args=(item_id, f"q_nx_{item_id}"))
+                                    if r_col4.button("✏️", key=f"bt_edt_i_{item_id}", help="Editar"):
+                                        st.session_state[f"edit_i_{item_id}"] = True
+                                        st.rerun()
+                                    if r_col5.button("🗑️", key=f"del_i_{item_id}", help="Excluir"):
+                                        db.excluir_item(item_id)
+                                        st.rerun()
+                                st.markdown("<hr style='margin: 2px 0; padding: 0; border-top: 1px dashed #eee;'>", unsafe_allow_html=True)
+                        else:
+                            st.info("Nenhum item cadastrado neste grupo. Adicione itens acima.")
+                    else:
+                        st.info(f"O robô extrairá todo o texto que estiver abaixo da palavra **{grupo_nome}** até o próximo grupo.")
+
+
+# =====================================================================
 # 4. TELA: IMPORTAÇÃO DE ARQUIVO DE DADOS
 # =====================================================================
-elif menu == "📥 Importar Dados Base":
-    st.title("📥 Importação de Arquivo de Dados")
-    st.write("Suba uma planilha XLS ou XLSX contendo as colunas **Bairro** e **Municipio** para mapear e gerar a respectiva coluna de **UPM** automaticamente.")
+elif menu == "⚡ Tratar Planilha (Injetar UPM)":
+    st.title("⚡ Tratar Planilha e Injetar UPM")
+    st.write("Envie sua planilha Excel de Ocorrências (contendo as colunas **Bairro** e **Municipio**). O robô irá higienizar os nomes (corrigindo erros e substituindo apelidos) e criará automaticamente uma nova coluna com a **UPM** correspondente. Em seguida, a planilha tratada ficará pronta para download.")
     
-    uploaded_file = st.file_uploader("Escolha um arquivo XLS ou XLSX", type=["xls", "xlsx"])
+    uploaded_file = st.file_uploader("Escolha um arquivo XLS ou XLSX para tratamento", type=["xls", "xlsx"])
     
     if uploaded_file is not None:
         try:
@@ -1646,6 +1905,12 @@ elif menu == "🤖 Robô de Extração (BO)":
     st.title("📥 Extração de Dados de BOs (PDF)")
     st.write("Faça o upload de um ou mais arquivos PDF de Boletins de Ocorrência para extrair dados automaticamente por seções e exportar o resultado para Excel.")
 
+    # Dropdown de Layout
+    df_layouts = db.listar_layouts()
+    lista_layouts = df_layouts["Nome_Layout"].tolist() if not df_layouts.empty else ["Layout Genérico Padrão"]
+    layout_selecionado = st.selectbox("Selecione o Layout de Extração", lista_layouts, key="combo_layout_manual")
+    layout_id = int(df_layouts[df_layouts["Nome_Layout"] == layout_selecionado]["ID"].values[0]) if not df_layouts.empty else 1
+
     uploaded_files = st.file_uploader("Escolha os arquivos PDF dos BOs", type=["pdf"], accept_multiple_files=True, key="bo_pdf_uploader")
 
     if uploaded_files:
@@ -1653,6 +1918,8 @@ elif menu == "🤖 Robô de Extração (BO)":
             try:
                 import pypdf
                 import extrair_bo as ex_bo
+                import importlib
+                importlib.reload(ex_bo)
                 
                 # Inicializa ou garante que o banco está pronto
                 db.inicializar_banco()
@@ -1694,7 +1961,8 @@ elif menu == "🤖 Robô de Extração (BO)":
                         # Processa usando a lógica unificada do script extrair_bo
                         res = ex_bo.processar_texto_bo(
                             texto, 
-                            uploaded_file.name, 
+                            uploaded_file.name,
+                            layout_id,
                             db_mappings, 
                             lista_municipios, 
                             bairros_por_mun
@@ -1707,7 +1975,7 @@ elif menu == "🤖 Robô de Extração (BO)":
                 
                 df_res = pd.DataFrame(resultados)
                 # Ordena as colunas usando a regra unificada centralizada no script
-                df_res = ex_bo.ordenar_dataframe(df_res)
+                df_res = ex_bo.ordenar_dataframe(df_res, layout_id)
                 
                 # Ajusta o índice para iniciar em 1 para exibição amigável
                 df_res.index = df_res.index + 1
@@ -1786,11 +2054,14 @@ elif menu == "⚙️ Configurações":
                             st.error(f"Erro: O arquivo de carga deve conter as abas: {', '.join(required_sheets)}. Abas ausentes no arquivo: {', '.join(missing)}")
                         else:
                             # Carrega os DataFrames
-                            df_mun = pd.read_excel(xls, sheet_name="Municipios")
-                            df_bai = pd.read_excel(xls, sheet_name="Bairros")
-                            df_alt = pd.read_excel(xls, sheet_name="Nomes Alternativos")
-                            df_upm = pd.read_excel(xls, sheet_name="UPMs")
-                            df_serv = pd.read_excel(xls, sheet_name="Servicos")
+                            df_mun = pd.read_excel(xls, sheet_name="Municipios") if "Municipios" in xls.sheet_names else pd.DataFrame()
+                            df_bai = pd.read_excel(xls, sheet_name="Bairros") if "Bairros" in xls.sheet_names else pd.DataFrame()
+                            df_alt = pd.read_excel(xls, sheet_name="Nomes Alternativos") if "Nomes Alternativos" in xls.sheet_names else pd.DataFrame()
+                            df_upm = pd.read_excel(xls, sheet_name="UPMs") if "UPMs" in xls.sheet_names else pd.DataFrame()
+                            df_serv = pd.read_excel(xls, sheet_name="Servicos") if "Servicos" in xls.sheet_names else pd.DataFrame()
+                            df_layouts = pd.read_excel(xls, sheet_name="Layouts") if "Layouts" in xls.sheet_names else pd.DataFrame()
+                            df_grupos = pd.read_excel(xls, sheet_name="Grupos") if "Grupos" in xls.sheet_names else pd.DataFrame()
+                            df_itens = pd.read_excel(xls, sheet_name="Itens") if "Itens" in xls.sheet_names else pd.DataFrame()
                             
                             # Executa as cargas na ordem correta
                             res_mun = db.importar_municipios_lote(df_mun)
@@ -1798,6 +2069,9 @@ elif menu == "⚙️ Configurações":
                             res_alt = db.importar_nomes_alternativos_lote(df_alt)
                             res_upm = db.importar_upms_lote(df_upm)
                             res_serv = db.importar_servicos_lote(df_serv)
+                            res_lay = db.importar_layouts_lote(df_layouts)
+                            res_grp = db.importar_grupos_lote(df_grupos)
+                            res_itn = db.importar_itens_lote(df_itens)
                             
                             st.success("🎉 Carga de dados realizada com sucesso!")
                             
@@ -1830,8 +2104,22 @@ elif menu == "⚙️ Configurações":
                     df_mun_exp = pd.read_sql("SELECT Municipio, Estado FROM municipios", conn_exp)
                     df_bai_exp = pd.read_sql("SELECT Bairro, Municipio FROM bairros", conn_exp)
                     df_alt_exp = pd.read_sql("SELECT b.Bairro as Bairro_Oficial, b.Municipio, a.Nome_Alternativo FROM bairros_alternativos a JOIN bairros b ON a.Bairro_ID = b.ID", conn_exp)
-                    df_upm_exp = pd.read_sql("SELECT UPM, Descricao, Bairro, Municipio, Estado FROM upms", conn_exp)
+                    df_upm_exp = pd.read_sql("""
+                        SELECT 
+                            u.UPM, 
+                            u.Descricao, 
+                            COALESCE(b.Bairro, u.Bairro) as Bairro, 
+                            COALESCE(b.Municipio, u.Municipio) as Municipio, 
+                            u.Estado 
+                        FROM upms u 
+                        LEFT JOIN upm_bairros ub ON u.ID = ub.UPM_ID 
+                        LEFT JOIN bairros b ON ub.Bairro_ID = b.ID
+                    """, conn_exp)
                     df_serv_exp = pd.read_sql("SELECT Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status FROM servicos", conn_exp)
+                    
+                    df_layouts_exp = pd.read_sql("SELECT Nome_Layout FROM layouts", conn_exp)
+                    df_grupos_exp = pd.read_sql("SELECT l.Nome_Layout, g.Nome_Grupo, g.Ordem, g.Tem_Itens FROM layout_grupos g JOIN layouts l ON g.Layout_ID = l.ID", conn_exp)
+                    df_itens_exp = pd.read_sql("SELECT l.Nome_Layout, g.Nome_Grupo, i.Nome_Item_Excel, i.Palavra_Busca, i.Ordem, i.Exportar_Excel FROM layout_itens i JOIN layout_grupos g ON i.Grupo_ID = g.ID JOIN layouts l ON g.Layout_ID = l.ID", conn_exp)
                     
                     conn_exp.close()
                     
@@ -1843,6 +2131,9 @@ elif menu == "⚙️ Configurações":
                         df_alt_exp.to_excel(writer, index=False, sheet_name="Nomes Alternativos")
                         df_upm_exp.to_excel(writer, index=False, sheet_name="UPMs")
                         df_serv_exp.to_excel(writer, index=False, sheet_name="Servicos")
+                        df_layouts_exp.to_excel(writer, index=False, sheet_name="Layouts")
+                        df_grupos_exp.to_excel(writer, index=False, sheet_name="Grupos")
+                        df_itens_exp.to_excel(writer, index=False, sheet_name="Itens")
                     
                     st.session_state.export_ready_data = buffer_export.getvalue()
                     st.success("✅ Banco compilado com sucesso! Clique no botão abaixo para baixar.")
@@ -2069,6 +2360,8 @@ elif menu.startswith("servico_"):
                         try:
                             import automacao as aut
                             import extrair_bo as ex_bo
+                            import importlib
+                            importlib.reload(ex_bo)
                             
                             # Formata as datas para YYYY-MM-DD
                             data_ini_str = data_inicial.strftime("%Y-%m-%d")
@@ -2122,9 +2415,11 @@ elif menu.startswith("servico_"):
                                         }
                                     else:
                                         # Processa usando o analisador unificado do script extrair_bo
+                                        layout_id = int(df_servicos_sidebar[df_servicos_sidebar["ID"] == id_servico].iloc[0].get("Layout_ID", 1))
                                         res = ex_bo.processar_texto_bo(
                                             texto,
                                             filename,
+                                            layout_id,
                                             db_mappings,
                                             lista_municipios,
                                             bairros_por_mun
@@ -2133,7 +2428,7 @@ elif menu.startswith("servico_"):
                                     
                                 # Compila tudo em um DataFrame e ordena
                                 df_res = pd.DataFrame(resultados)
-                                df_res = ex_bo.ordenar_dataframe(df_res)
+                                df_res = ex_bo.ordenar_dataframe(df_res, layout_id)
                                 
                                 # Ajusta o índice para iniciar em 1 para visualização
                                 df_res.index = range(1, len(df_res) + 1)
