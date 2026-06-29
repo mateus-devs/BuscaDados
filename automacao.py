@@ -1,5 +1,5 @@
 import os
-import sqlite3
+import psycopg2
 import time
 from playwright.sync_api import sync_playwright
 

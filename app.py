@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import banco as db
-import sqlite3
+import psycopg2
 from datetime import datetime
 
 # Configuração global da página do Streamlit
@@ -455,8 +455,8 @@ if menu == "🏙️ Manutenção de Municípios":
             c_atualizar, c_cancelar = st.columns(2)
             if c_atualizar.button("💾 Salvar Alterações", key="btn_update_mun", width="stretch"):
                 if novo_mun:
-                    conn = sqlite3.connect("buscadados.db"); cursor = conn.cursor()
-                    cursor.execute("UPDATE municipios SET Municipio = ?, Estado = ? WHERE ID = ?", (novo_mun, estado_mun, dados["ID"]))
+                    conn = db.obter_conexao(); cursor = conn.cursor()
+                    cursor.execute("UPDATE municipios SET Municipio = %s, Estado = %s WHERE ID = %s", (novo_mun, estado_mun, dados["ID"]))
                     conn.commit(); conn.close()
                     st.session_state.sub_tela_mun = "listar"; st.session_state.mensagem_sucesso = "✏️ Município alterado com sucesso!"; st.rerun()
                 else: st.error("O nome do município não pode ficar em branco.")
@@ -679,8 +679,8 @@ elif menu == "🏘️ Manutenção de Bairros":
                 if novo_bairro:
                     municipio_puro = municipio_selecionado_combo.split(" / ")[0].strip()
                     
-                    conn = sqlite3.connect("buscadados.db"); cursor = conn.cursor()
-                    cursor.execute("UPDATE bairros SET Bairro = ?, Municipio = ? WHERE ID = ?", (novo_bairro, municipio_puro, dados["ID"]))
+                    conn = db.obter_conexao(); cursor = conn.cursor()
+                    cursor.execute("UPDATE bairros SET Bairro = %s, Municipio = %s WHERE ID = %s", (novo_bairro, municipio_puro, dados["ID"]))
                     conn.commit(); conn.close()
                     st.session_state.sub_tela_bai = "listar"
                     st.session_state.mensagem_sucesso = "✏️ Bairro atualizado com sucesso!"
@@ -880,8 +880,8 @@ elif menu == "🚔 Manutenção de UPMs":
             c_s, c_c = st.columns(2)
             if c_s.button("💾 Salvar Alterações", key="btn_update_upm", width="stretch"):
                 if nome_upm:
-                    conn = sqlite3.connect("buscadados.db"); cursor = conn.cursor()
-                    cursor.execute("UPDATE upms SET UPM = ?, Descricao = ? WHERE ID = ?", (nome_upm, descricao_upm, dados["ID"]))
+                    conn = db.obter_conexao(); cursor = conn.cursor()
+                    cursor.execute("UPDATE upms SET UPM = %s, Descricao = %s WHERE ID = %s", (nome_upm, descricao_upm, dados["ID"]))
                     conn.commit(); conn.close()
                     st.session_state.sub_tela_upm = "listar"; st.session_state.mensagem_sucesso = "✏️ UPM alterada com sucesso!"; st.rerun()
                 else: st.error("O nome da UPM não pode ficar em branco.")
@@ -892,8 +892,8 @@ elif menu == "🚔 Manutenção de UPMs":
             c_s, c_c = st.columns(2)
             if c_s.button("🗑️ Sim, Excluir Registro", key="btn_delete_confirm_upm", width="stretch"):
                 # Limpa vínculos em upm_bairros primeiro
-                conn = sqlite3.connect("buscadados.db"); cursor = conn.cursor()
-                cursor.execute("DELETE FROM upm_bairros WHERE UPM_ID = ?", (dados["ID"],))
+                conn = db.obter_conexao(); cursor = conn.cursor()
+                cursor.execute("DELETE FROM upm_bairros WHERE UPM_ID = %s", (dados["ID"],))
                 conn.commit(); conn.close()
                 # Exclui a UPM
                 db.excluir_registro("upms", dados["ID"])
@@ -1294,11 +1294,11 @@ elif menu == "🌐 Manutenção de Serviços":
             c_atualizar, c_cancelar = st.columns(2)
             if c_atualizar.button("💾 Salvar Alterações", key="btn_update_ser", width="stretch"):
                 if novo_nome and nova_url_login and nova_url_consulta and nova_url_pdf:
-                    conn = sqlite3.connect("buscadados.db")
+                    conn = db.obter_conexao()
                     cursor = conn.cursor()
                     senha_criptografada = db.criptografar_senha(nova_senha)
                     cursor.execute(
-                        "UPDATE servicos SET Nome = ?, UrlLogin = ?, UrlConsulta = ?, UrlPdf = ?, Login = ?, Senha = ?, DuplaAutenticacao = ?, Tipo = ?, Status = ?, Tempo_Expiracao_Horas = ?, Layout_ID = ? WHERE ID = ?",
+                        "UPDATE servicos SET Nome = %s, UrlLogin = %s, UrlConsulta = %s, UrlPdf = %s, Login = %s, Senha = %s, DuplaAutenticacao = %s, Tipo = %s, Status = %s, Tempo_Expiracao_Horas = %s, Layout_ID = %s WHERE ID = %s",
                         (novo_nome, nova_url_login, nova_url_consulta, nova_url_pdf, novo_login, senha_criptografada, nova_dupla, novo_tipo, novo_status, novo_tempo_expiracao, novo_layout_id, dados["ID"])
                     )
                     conn.commit()
@@ -2099,11 +2099,11 @@ elif menu == "⚙️ Configurações":
         if st.button("🔄 Compilar Dados para Exportação", type="secondary", use_container_width=True):
             with st.spinner("Extraindo e formatando dados do banco..."):
                 try:
-                    conn_exp = sqlite3.connect("buscadados.db")
+                    conn_exp = db.engine
                     
-                    df_mun_exp = pd.read_sql("SELECT Municipio, Estado FROM municipios", conn_exp)
-                    df_bai_exp = pd.read_sql("SELECT Bairro, Municipio FROM bairros", conn_exp)
-                    df_alt_exp = pd.read_sql("SELECT b.Bairro as Bairro_Oficial, b.Municipio, a.Nome_Alternativo FROM bairros_alternativos a JOIN bairros b ON a.Bairro_ID = b.ID", conn_exp)
+                    df_mun_exp = db.ajustar_colunas(pd.read_sql("SELECT Municipio, Estado FROM municipios", conn_exp))
+                    df_bai_exp = db.ajustar_colunas(pd.read_sql("SELECT Bairro, Municipio FROM bairros", conn_exp))
+                    df_alt_exp = db.ajustar_colunas(pd.read_sql("SELECT b.Bairro as Bairro_Oficial, b.Municipio, a.Nome_Alternativo FROM bairros_alternativos a JOIN bairros b ON a.Bairro_ID = b.ID", conn_exp))
                     df_upm_exp = pd.read_sql("""
                         SELECT 
                             u.UPM, 
@@ -2115,13 +2115,13 @@ elif menu == "⚙️ Configurações":
                         LEFT JOIN upm_bairros ub ON u.ID = ub.UPM_ID 
                         LEFT JOIN bairros b ON ub.Bairro_ID = b.ID
                     """, conn_exp)
-                    df_serv_exp = pd.read_sql("SELECT Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status FROM servicos", conn_exp)
+                    df_serv_exp = db.ajustar_colunas(pd.read_sql("SELECT Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status FROM servicos", conn_exp))
                     
-                    df_layouts_exp = pd.read_sql("SELECT Nome_Layout FROM layouts", conn_exp)
-                    df_grupos_exp = pd.read_sql("SELECT l.Nome_Layout, g.Nome_Grupo, g.Ordem, g.Tem_Itens FROM layout_grupos g JOIN layouts l ON g.Layout_ID = l.ID", conn_exp)
-                    df_itens_exp = pd.read_sql("SELECT l.Nome_Layout, g.Nome_Grupo, i.Nome_Item_Excel, i.Palavra_Busca, i.Ordem, i.Exportar_Excel FROM layout_itens i JOIN layout_grupos g ON i.Grupo_ID = g.ID JOIN layouts l ON g.Layout_ID = l.ID", conn_exp)
+                    df_layouts_exp = db.ajustar_colunas(pd.read_sql("SELECT Nome_Layout FROM layouts", conn_exp))
+                    df_grupos_exp = db.ajustar_colunas(pd.read_sql("SELECT l.Nome_Layout, g.Nome_Grupo, g.Ordem, g.Tem_Itens FROM layout_grupos g JOIN layouts l ON g.Layout_ID = l.ID", conn_exp))
+                    df_itens_exp = db.ajustar_colunas(pd.read_sql("SELECT l.Nome_Layout, g.Nome_Grupo, i.Nome_Item_Excel, i.Palavra_Busca, i.Ordem, i.Exportar_Excel FROM layout_itens i JOIN layout_grupos g ON i.Grupo_ID = g.ID JOIN layouts l ON g.Layout_ID = l.ID", conn_exp))
                     
-                    conn_exp.close()
+                    # Não é necessário fechar a engine do SQLAlchemy
                     
                     import io
                     buffer_export = io.BytesIO()
@@ -2172,9 +2172,9 @@ elif menu.startswith("servico_"):
     id_servico = int(menu.replace("servico_", ""))
     
     # Busca detalhes do serviço no banco
-    conn = sqlite3.connect("buscadados.db")
+    conn = db.obter_conexao()
     cursor = conn.cursor()
-    cursor.execute("SELECT Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status FROM servicos WHERE ID = ?", (id_servico,))
+    cursor.execute("SELECT Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status FROM servicos WHERE ID = %s", (id_servico,))
     row = cursor.fetchone()
     conn.close()
     

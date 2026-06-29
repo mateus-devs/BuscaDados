@@ -1,5 +1,14 @@
-import sqlite3
+import psycopg2
+from psycopg2.extensions import register_adapter, AsIs
+import numpy as np
 
+register_adapter(np.int64, AsIs)
+register_adapter(np.int32, AsIs)
+register_adapter(np.int16, AsIs)
+register_adapter(np.int8, AsIs)
+register_adapter(np.float64, AsIs)
+register_adapter(np.float32, AsIs)
+register_adapter(np.bool_, AsIs)
 import pandas as pd
 
 from sqlalchemy import create_engine
@@ -194,11 +203,58 @@ def padronizar_municipio(municipio_bruto):
 
 
 
-DB_FILE = "buscadados.db"
+import urllib.parse
 
-CONN_STR = f"sqlite:///{DB_FILE}"
+
+COLUNAS_MAP = {
+    'id': 'ID',
+    'municipio': 'Municipio',
+    'estado': 'Estado',
+    'bairro': 'Bairro',
+    'upm': 'UPM',
+    'descricao': 'Descricao',
+    'nome': 'Nome',
+    'urllogin': 'UrlLogin',
+    'urlconsulta': 'UrlConsulta',
+    'urlpdf': 'UrlPdf',
+    'login': 'Login',
+    'senha': 'Senha',
+    'duplaautenticacao': 'DuplaAutenticacao',
+    'tipo': 'Tipo',
+    'status': 'Status',
+    'tempo_expiracao_horas': 'Tempo_Expiracao_Horas',
+    'layout_id': 'Layout_ID',
+    'nome_layout': 'Nome_Layout',
+    'nome_grupo': 'Nome_Grupo',
+    'ordem': 'Ordem',
+    'tem_itens': 'Tem_Itens',
+    'grupo_id': 'Grupo_ID',
+    'nome_item_excel': 'Nome_Item_Excel',
+    'palavra_busca': 'Palavra_Busca',
+    'exportar_excel': 'Exportar_Excel',
+    'bairro_id': 'Bairro_ID',
+    'upm_id': 'UPM_ID',
+    'nome_alternativo': 'Nome_Alternativo',
+    'servico_id': 'Servico_ID',
+    'session_data': 'Session_Data',
+    'data_login': 'Data_Login',
+    'bairro_oficial': 'Bairro_Oficial',
+    'bairroid': 'BairroID',
+    'vinculoid': 'VinculoID'
+}
+
+def ajustar_colunas(df):
+    if not df.empty:
+        df.rename(columns=COLUNAS_MAP, inplace=True)
+    return df
+
+db_pass = urllib.parse.quote_plus(os.getenv('DB_PASSWORD', ''))
+CONN_STR = f"postgresql+psycopg2://{os.getenv('DB_USER')}:{db_pass}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
 
 engine = create_engine(CONN_STR)
+
+def obter_conexao():
+    return engine.raw_connection()
 
 
 
@@ -212,7 +268,7 @@ def inicializar_banco():
 
     """Cria as tabelas estruturadas com restrições NOT NULL se o banco for novo"""
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -224,7 +280,7 @@ def inicializar_banco():
 
     CREATE TABLE IF NOT EXISTS municipios (
 
-        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        ID SERIAL PRIMARY KEY,
 
         Municipio TEXT NOT NULL,
 
@@ -242,7 +298,7 @@ def inicializar_banco():
 
     CREATE TABLE IF NOT EXISTS bairros (
 
-        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        ID SERIAL PRIMARY KEY,
 
         Bairro TEXT NOT NULL,
 
@@ -260,7 +316,7 @@ def inicializar_banco():
 
     CREATE TABLE IF NOT EXISTS upms (
 
-        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        ID SERIAL PRIMARY KEY,
 
         UPM TEXT NOT NULL,
 
@@ -284,7 +340,7 @@ def inicializar_banco():
 
     CREATE TABLE IF NOT EXISTS upm_bairros (
 
-        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        ID SERIAL PRIMARY KEY,
 
         UPM_ID INTEGER NOT NULL,
 
@@ -308,7 +364,7 @@ def inicializar_banco():
 
     CREATE TABLE IF NOT EXISTS bairros_alternativos (
 
-        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        ID SERIAL PRIMARY KEY,
 
         Bairro_ID INTEGER NOT NULL,
 
@@ -330,7 +386,7 @@ def inicializar_banco():
 
     CREATE TABLE IF NOT EXISTS servicos (
 
-        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        ID SERIAL PRIMARY KEY,
 
         Nome TEXT NOT NULL,
 
@@ -356,15 +412,56 @@ def inicializar_banco():
 
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS servicos_sessoes (
+        ID SERIAL PRIMARY KEY,
+        Servico_ID INTEGER NOT NULL,
+        Session_Data TEXT NOT NULL,
+        Data_Login TEXT NOT NULL,
+        Status TEXT NOT NULL DEFAULT 'Ativa',
+        FOREIGN KEY(Servico_ID) REFERENCES servicos(ID)
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS layouts (
+        ID SERIAL PRIMARY KEY,
+        Nome_Layout TEXT NOT NULL UNIQUE
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS layout_grupos (
+        ID SERIAL PRIMARY KEY,
+        Layout_ID INTEGER NOT NULL,
+        Nome_Grupo TEXT NOT NULL,
+        Ordem INTEGER NOT NULL,
+        Tem_Itens INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY(Layout_ID) REFERENCES layouts(ID) ON DELETE CASCADE
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS layout_itens (
+        ID SERIAL PRIMARY KEY,
+        Grupo_ID INTEGER NOT NULL,
+        Nome_Item_Excel TEXT NOT NULL,
+        Palavra_Busca TEXT NOT NULL,
+        Ordem INTEGER NOT NULL,
+        Exportar_Excel INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY(Grupo_ID) REFERENCES layout_grupos(ID) ON DELETE CASCADE
+    )
+    """)
+
     
 
     # Se o banco já existir, garanta a coluna Descricao na tabela de UPMs
 
-    cursor.execute("PRAGMA table_info(upms)")
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='upms'")
 
-    colunas_upm = [row[1] for row in cursor.fetchall()]
+    colunas_upm = [row[0] for row in cursor.fetchall()]
 
-    if "Descricao" not in colunas_upm:
+    if "descricao" not in [c.lower() for c in colunas_upm]:
 
         cursor.execute("ALTER TABLE upms ADD COLUMN Descricao TEXT NOT NULL DEFAULT ''")
 
@@ -372,25 +469,27 @@ def inicializar_banco():
 
     # Garanta as colunas novas na tabela de serviços para bancos já existentes
 
-    cursor.execute("PRAGMA table_info(servicos)")
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='servicos'")
 
-    colunas_ser = [row[1] for row in cursor.fetchall()]
+    colunas_ser = [row[0] for row in cursor.fetchall()]
 
-    if "DuplaAutenticacao" not in colunas_ser:
+    if "duplaautenticacao" not in [c.lower() for c in colunas_ser]:
 
         cursor.execute("ALTER TABLE servicos ADD COLUMN DuplaAutenticacao TEXT NOT NULL DEFAULT 'Não'")
 
-    if "Tipo" not in colunas_ser:
+    col_ser_lower = [c.lower() for c in colunas_ser]
 
+    if "tipo" not in col_ser_lower:
         cursor.execute("ALTER TABLE servicos ADD COLUMN Tipo TEXT NOT NULL DEFAULT 'SROP'")
 
-    if "Status" not in colunas_ser:
-
+    if "status" not in col_ser_lower:
         cursor.execute("ALTER TABLE servicos ADD COLUMN Status TEXT NOT NULL DEFAULT 'Ativo'")
 
-    if "Tempo_Expiracao_Horas" not in colunas_ser:
-
+    if "tempo_expiracao_horas" not in col_ser_lower:
         cursor.execute("ALTER TABLE servicos ADD COLUMN Tempo_Expiracao_Horas INTEGER NOT NULL DEFAULT 4")
+
+    if "layout_id" not in col_ser_lower:
+        cursor.execute("ALTER TABLE servicos ADD COLUMN Layout_ID INTEGER")
 
     
 
@@ -402,13 +501,13 @@ def inicializar_banco():
 
         cursor.execute("""
 
-        INSERT OR IGNORE INTO upm_bairros (UPM_ID, Bairro_ID)
-
+        INSERT INTO upm_bairros (UPM_ID, Bairro_ID)
         SELECT u.ID, b.ID
 
         FROM upms u
 
         JOIN bairros b ON LOWER(u.Bairro) = LOWER(b.Bairro) AND LOWER(u.Municipio) = LOWER(b.Municipio)
+        ON CONFLICT (UPM_ID, Bairro_ID) DO NOTHING
 
         """)
 
@@ -426,7 +525,7 @@ def listar_dados(tabela: str) -> pd.DataFrame:
 
     try:
 
-        return pd.read_sql(f"SELECT * FROM {tabela}", engine)
+        return ajustar_colunas(pd.read_sql(f"SELECT * FROM {tabela}", engine))
 
     except Exception:
 
@@ -438,7 +537,7 @@ def salvar_registro(tabela: str, dados_dict: dict) -> bool:
 
     """Insere um novo registro apenas se não for duplicado no banco"""
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -450,7 +549,7 @@ def salvar_registro(tabela: str, dados_dict: dict) -> bool:
 
         municipio = dados_salvar["Municipio"].strip()
 
-        cursor.execute("SELECT 1 FROM municipios WHERE LOWER(Municipio) = LOWER(?)", (municipio,))
+        cursor.execute("SELECT 1 FROM municipios WHERE LOWER(Municipio) = LOWER(%s)", (municipio,))
 
         if cursor.fetchone():
 
@@ -466,7 +565,7 @@ def salvar_registro(tabela: str, dados_dict: dict) -> bool:
 
         municipio = dados_salvar["Municipio"]
 
-        cursor.execute("SELECT 1 FROM bairros WHERE LOWER(Bairro) = LOWER(?) AND Municipio = ?", (bairro, municipio))
+        cursor.execute("SELECT 1 FROM bairros WHERE LOWER(Bairro) = LOWER(%s) AND Municipio = %s", (bairro, municipio))
 
         if cursor.fetchone():
 
@@ -480,7 +579,7 @@ def salvar_registro(tabela: str, dados_dict: dict) -> bool:
 
         upm = dados_salvar["UPM"].strip()
 
-        cursor.execute("SELECT 1 FROM upms WHERE LOWER(UPM) = LOWER(?)", (upm,))
+        cursor.execute("SELECT 1 FROM upms WHERE LOWER(UPM) = LOWER(%s)", (upm,))
 
         if cursor.fetchone():
 
@@ -494,7 +593,7 @@ def salvar_registro(tabela: str, dados_dict: dict) -> bool:
 
         nome = dados_salvar["Nome"].strip()
 
-        cursor.execute("SELECT 1 FROM servicos WHERE LOWER(Nome) = LOWER(?)", (nome,))
+        cursor.execute("SELECT 1 FROM servicos WHERE LOWER(Nome) = LOWER(%s)", (nome,))
 
         if cursor.fetchone():
 
@@ -540,29 +639,29 @@ def listar_bairros_vinculados(upm_id: int) -> pd.DataFrame:
 
     JOIN bairros b ON ub.Bairro_ID = b.ID
 
-    WHERE ub.UPM_ID = ?
+    WHERE ub.UPM_ID = %s
 
     ORDER BY b.Municipio, b.Bairro
 
     """
 
-    return pd.read_sql(query, engine, params=(upm_id,))
+    return ajustar_colunas(pd.read_sql(query, engine, params=(upm_id,)))
 
 
 
 def atualizar_vinculo_bairros(upm_id: int, bairro_ids: list) -> bool:
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
-    cursor.execute("DELETE FROM upm_bairros WHERE UPM_ID = ?", (upm_id,))
+    cursor.execute("DELETE FROM upm_bairros WHERE UPM_ID = %s", (upm_id,))
 
     for bairro_id in bairro_ids:
 
         cursor.execute(
 
-            "INSERT OR IGNORE INTO upm_bairros (UPM_ID, Bairro_ID) VALUES (?, ?)",
+            "INSERT INTO upm_bairros (UPM_ID, Bairro_ID) VALUES (%s, %s) ON CONFLICT (UPM_ID, Bairro_ID) DO NOTHING",
 
             (upm_id, bairro_id),
 
@@ -582,7 +681,7 @@ def obter_mapeamento_upms() -> dict:
 
     """Retorna um dicionário mapeando (bairro_normalizado, municipio_normalizado) -> nome_da_upm"""
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -626,7 +725,7 @@ def obter_mapeamento_nomes_municipios() -> dict:
 
     """Retorna um dicionário mapeando municipio_normalizado -> Nome_Oficial_Do_Banco"""
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -646,7 +745,7 @@ def obter_mapeamento_nomes_bairros() -> dict:
 
     """Retorna um dicionário mapeando (bairro_normalizado, municipio_normalizado) -> Bairro_Oficial_Do_Banco"""
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -682,9 +781,9 @@ def listar_nomes_alternativos(bairro_id: int) -> pd.DataFrame:
 
     try:
 
-        conn = sqlite3.connect(DB_FILE)
+        conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
-        df = pd.read_sql("SELECT * FROM bairros_alternativos WHERE Bairro_ID = ? ORDER BY Nome_Alternativo", conn, params=(bairro_id,))
+        df = ajustar_colunas(pd.read_sql("SELECT * FROM bairros_alternativos WHERE Bairro_ID = %s ORDER BY Nome_Alternativo", conn, params=(bairro_id,)))
 
         conn.close()
 
@@ -708,19 +807,18 @@ def salvar_nome_alternativo(bairro_id: int, nome_alternativo: str) -> bool:
 
         
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
-    cursor.execute("PRAGMA foreign_keys = ON")
-
+    
     
 
     # Verifica se já existe para este bairro (case insensitive)
 
     cursor.execute(
 
-        "SELECT 1 FROM bairros_alternativos WHERE Bairro_ID = ? AND LOWER(Nome_Alternativo) = LOWER(?)",
+        "SELECT 1 FROM bairros_alternativos WHERE Bairro_ID = %s AND LOWER(Nome_Alternativo) = LOWER(%s)",
 
         (bairro_id, nome_alternativo)
 
@@ -736,7 +834,7 @@ def salvar_nome_alternativo(bairro_id: int, nome_alternativo: str) -> bool:
 
     cursor.execute(
 
-        "INSERT INTO bairros_alternativos (Bairro_ID, Nome_Alternativo) VALUES (?, ?)",
+        "INSERT INTO bairros_alternativos (Bairro_ID, Nome_Alternativo) VALUES (%s, %s)",
 
         (bairro_id, nome_alternativo)
 
@@ -754,13 +852,12 @@ def excluir_nome_alternativo(id_alternativo: int):
 
     """Exclui um nome alternativo do banco"""
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
-    cursor.execute("PRAGMA foreign_keys = ON")
-
-    cursor.execute("DELETE FROM bairros_alternativos WHERE ID = ?", (id_alternativo,))
+    
+    cursor.execute("DELETE FROM bairros_alternativos WHERE ID = %s", (id_alternativo,))
 
     conn.commit()
 
@@ -772,7 +869,7 @@ def obter_mapeamento_alternativo_bairros() -> dict:
 
     """Retorna um dicionário mapeando (bairro_alternativo_normalizado, municipio_normalizado) -> Bairro_Nome_Oficial"""
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -814,19 +911,18 @@ def excluir_registro(tabela: str, id_registro: int):
 
     """Exclui uma linha de qualquer tabela do banco com base no ID"""
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
-    cursor.execute("PRAGMA foreign_keys = ON")
-
+    
     if tabela == "bairros":
-        cursor.execute("DELETE FROM upm_bairros WHERE Bairro_ID = ?", (id_registro,))
-        cursor.execute("DELETE FROM bairros_alternativos WHERE Bairro_ID = ?", (id_registro,))
+        cursor.execute("DELETE FROM upm_bairros WHERE Bairro_ID = %s", (id_registro,))
+        cursor.execute("DELETE FROM bairros_alternativos WHERE Bairro_ID = %s", (id_registro,))
     elif tabela == "upms":
-        cursor.execute("DELETE FROM upm_bairros WHERE UPM_ID = ?", (id_registro,))
+        cursor.execute("DELETE FROM upm_bairros WHERE UPM_ID = %s", (id_registro,))
 
-    cursor.execute(f"DELETE FROM {tabela} WHERE ID = ?", (id_registro,))
+    cursor.execute(f"DELETE FROM {tabela} WHERE ID = %s", (id_registro,))
 
     conn.commit()
 
@@ -840,7 +936,7 @@ def limpar_banco_dados():
 
     """Exclui todos os registros de todas as tabelas e reinicia os IDs autoincrementais"""
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -890,7 +986,7 @@ def importar_municipios_lote(df: pd.DataFrame) -> dict:
 
         
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -948,7 +1044,7 @@ def importar_municipios_lote(df: pd.DataFrame) -> dict:
 
                 cursor.execute(
 
-                    "INSERT INTO municipios (Municipio, Estado) VALUES (?, ?)",
+                    "INSERT INTO municipios (Municipio, Estado) VALUES (%s, %s)",
 
                     (mun_clean, est_clean)
 
@@ -992,7 +1088,7 @@ def importar_bairros_lote(df: pd.DataFrame) -> dict:
 
         
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -1044,7 +1140,7 @@ def importar_bairros_lote(df: pd.DataFrame) -> dict:
 
                 cursor.execute(
 
-                    "INSERT INTO bairros (Bairro, Municipio) VALUES (?, ?)",
+                    "INSERT INTO bairros (Bairro, Municipio) VALUES (%s, %s)",
 
                     (bai_clean, mun_clean)
 
@@ -1088,7 +1184,7 @@ def importar_nomes_alternativos_lote(df: pd.DataFrame) -> dict:
 
         
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -1166,7 +1262,7 @@ def importar_nomes_alternativos_lote(df: pd.DataFrame) -> dict:
 
                 cursor.execute(
 
-                    "INSERT INTO bairros_alternativos (Bairro_ID, Nome_Alternativo) VALUES (?, ?)",
+                    "INSERT INTO bairros_alternativos (Bairro_ID, Nome_Alternativo) VALUES (%s, %s)",
 
                     (bairro_id, nome_alt_clean)
 
@@ -1210,7 +1306,7 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
         
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -1288,7 +1384,7 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
                 cursor.execute(
 
-                    "INSERT INTO upms (UPM, Descricao, Bairro, Municipio, Estado) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO upms (UPM, Descricao, Bairro, Municipio, Estado) VALUES (%s, %s, %s, %s, %s)",
 
                     (upm_clean, desc_clean, bai_clean, mun_clean, est_clean)
 
@@ -1330,7 +1426,7 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
                     cursor.execute(
 
-                        "INSERT OR IGNORE INTO upm_bairros (UPM_ID, Bairro_ID) VALUES (?, ?)",
+                        "INSERT INTO upm_bairros (UPM_ID, Bairro_ID) VALUES (%s, %s) ON CONFLICT (UPM_ID, Bairro_ID) DO NOTHING",
 
                         (upm_id, bairro_id)
 
@@ -1364,7 +1460,7 @@ def obter_municipios_com_bairro_todos_unico() -> dict:
 
     """
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -1410,7 +1506,7 @@ def obter_municipios_com_bairro_todos_unico() -> dict:
 
         JOIN bairros b ON ub.Bairro_ID = b.ID
 
-        WHERE LOWER(b.Bairro) = 'todos' AND LOWER(b.Municipio) = LOWER(?)
+        WHERE LOWER(b.Bairro) = 'todos' AND LOWER(b.Municipio) = LOWER(%s)
 
         """
 
@@ -1434,7 +1530,7 @@ def obter_municipios_com_bairro_todos_unico() -> dict:
 
                 cursor.execute(
 
-                    "INSERT INTO bairros (Bairro, Municipio) VALUES (?, ?)",
+                    "INSERT INTO bairros (Bairro, Municipio) VALUES (%s, %s)",
 
                     (bai_clean, mun_clean)
 
@@ -1478,7 +1574,7 @@ def importar_nomes_alternativos_lote(df: pd.DataFrame) -> dict:
 
         
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -1556,7 +1652,7 @@ def importar_nomes_alternativos_lote(df: pd.DataFrame) -> dict:
 
                 cursor.execute(
 
-                    "INSERT INTO bairros_alternativos (Bairro_ID, Nome_Alternativo) VALUES (?, ?)",
+                    "INSERT INTO bairros_alternativos (Bairro_ID, Nome_Alternativo) VALUES (%s, %s)",
 
                     (bairro_id, nome_alt_clean)
 
@@ -1600,7 +1696,7 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
         
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -1678,7 +1774,7 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
                 cursor.execute(
 
-                    "INSERT INTO upms (UPM, Descricao, Bairro, Municipio, Estado) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO upms (UPM, Descricao, Bairro, Municipio, Estado) VALUES (%s, %s, %s, %s, %s)",
 
                     (upm_clean, desc_clean, bai_clean, mun_clean, est_clean)
 
@@ -1720,7 +1816,7 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
                     cursor.execute(
 
-                        "INSERT OR IGNORE INTO upm_bairros (UPM_ID, Bairro_ID) VALUES (?, ?)",
+                        "INSERT INTO upm_bairros (UPM_ID, Bairro_ID) VALUES (%s, %s) ON CONFLICT (UPM_ID, Bairro_ID) DO NOTHING",
 
                         (upm_id, bairro_id)
 
@@ -1754,7 +1850,7 @@ def obter_municipios_com_bairro_todos_unico() -> dict:
 
     """
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -1800,7 +1896,7 @@ def obter_municipios_com_bairro_todos_unico() -> dict:
 
         JOIN bairros b ON ub.Bairro_ID = b.ID
 
-        WHERE LOWER(b.Bairro) = 'todos' AND LOWER(b.Municipio) = LOWER(?)
+        WHERE LOWER(b.Bairro) = 'todos' AND LOWER(b.Municipio) = LOWER(%s)
 
         """
 
@@ -1824,8 +1920,8 @@ def importar_servicos_lote(df) -> dict:
     """Importa serviços mantendo a criptografia e atualizando registros existentes pelo Nome"""
     inseridos = pulados = erros = 0
     if df.empty: return {"inseridos": inseridos, "pulados": pulados, "erros": erros}
-    import sqlite3, pandas as pd
-    conn = sqlite3.connect(DB_FILE)
+    import psycopg2, pandas as pd
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
     cursor.execute("SELECT ID, Nome, Senha FROM servicos")
     existentes = {str(row[1]).strip().upper(): (row[0], row[2]) for row in cursor.fetchall()}
@@ -1851,13 +1947,13 @@ def importar_servicos_lote(df) -> dict:
         if nome_upper in existentes:
             id_existente, _ = existentes[nome_upper]
             try:
-                cursor.execute("UPDATE servicos SET UrlLogin=?, UrlConsulta=?, UrlPdf=?, Login=?, Senha=?, DuplaAutenticacao=?, Tipo=?, Status=? WHERE ID=?",
+                cursor.execute("UPDATE servicos SET UrlLogin=%s, UrlConsulta=%s, UrlPdf=%s, Login=%s, Senha=%s, DuplaAutenticacao=%s, Tipo=%s, Status=%s WHERE ID=%s",
                     (url_login, url_consulta, url_pdf, login, senha_final, dupla, tipo, status, id_existente))
                 pulados += 1
             except: erros += 1
         else:
             try:
-                cursor.execute("INSERT INTO servicos (Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                cursor.execute("INSERT INTO servicos (Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (nome_clean, url_login, url_consulta, url_pdf, login, senha_final, dupla, tipo, status))
                 inseridos += 1
             except: erros += 1
@@ -1868,8 +1964,8 @@ def importar_servicos_lote(df) -> dict:
 def importar_layouts_lote(df) -> dict:
     inseridos = pulados = erros = 0
     if df.empty: return {"inseridos": inseridos, "pulados": pulados, "erros": erros}
-    import sqlite3, pandas as pd
-    conn = sqlite3.connect(DB_FILE)
+    import psycopg2, pandas as pd
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
     cursor.execute("SELECT ID, Nome_Layout FROM layouts")
     existentes = {str(row[1]).strip().upper(): row[0] for row in cursor.fetchall()}
@@ -1882,7 +1978,7 @@ def importar_layouts_lote(df) -> dict:
             pulados += 1
         else:
             try:
-                cursor.execute("INSERT INTO layouts (Nome_Layout) VALUES (?)", (nome,))
+                cursor.execute("INSERT INTO layouts (Nome_Layout) VALUES (%s)", (nome,))
                 inseridos += 1
                 existentes[nome_upper] = cursor.lastrowid
             except: erros += 1
@@ -1893,8 +1989,8 @@ def importar_layouts_lote(df) -> dict:
 def importar_grupos_lote(df) -> dict:
     inseridos = pulados = erros = 0
     if df.empty: return {"inseridos": inseridos, "pulados": pulados, "erros": erros}
-    import sqlite3, pandas as pd
-    conn = sqlite3.connect(DB_FILE)
+    import psycopg2, pandas as pd
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
     cursor.execute("SELECT ID, Nome_Layout FROM layouts")
     layouts_map = {str(row[1]).strip().upper(): row[0] for row in cursor.fetchall()}
@@ -1913,12 +2009,12 @@ def importar_grupos_lote(df) -> dict:
         key = (layout_id, nome_grupo)
         if key in existentes:
             try:
-                cursor.execute("UPDATE layout_grupos SET Ordem=?, Tem_Itens=? WHERE ID=?", (ordem, tem_itens, existentes[key]))
+                cursor.execute("UPDATE layout_grupos SET Ordem=%s, Tem_Itens=%s WHERE ID=%s", (ordem, tem_itens, existentes[key]))
                 pulados += 1
             except: erros += 1
         else:
             try:
-                cursor.execute("INSERT INTO layout_grupos (Layout_ID, Nome_Grupo, Ordem, Tem_Itens) VALUES (?, ?, ?, ?)", (layout_id, nome_grupo, ordem, tem_itens))
+                cursor.execute("INSERT INTO layout_grupos (Layout_ID, Nome_Grupo, Ordem, Tem_Itens) VALUES (%s, %s, %s, %s)", (layout_id, nome_grupo, ordem, tem_itens))
                 inseridos += 1
                 existentes[key] = cursor.lastrowid
             except: erros += 1
@@ -1929,8 +2025,8 @@ def importar_grupos_lote(df) -> dict:
 def importar_itens_lote(df) -> dict:
     inseridos = pulados = erros = 0
     if df.empty: return {"inseridos": inseridos, "pulados": pulados, "erros": erros}
-    import sqlite3, pandas as pd
-    conn = sqlite3.connect(DB_FILE)
+    import psycopg2, pandas as pd
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
     cursor.execute("SELECT ID, Nome_Layout FROM layouts")
     layouts_map = {str(row[1]).strip().upper(): row[0] for row in cursor.fetchall()}
@@ -1956,12 +2052,12 @@ def importar_itens_lote(df) -> dict:
         key = (grupo_id, nome_item)
         if key in existentes:
             try:
-                cursor.execute("UPDATE layout_itens SET Palavra_Busca=?, Ordem=?, Exportar_Excel=? WHERE ID=?", (palavra, ordem, exportar, existentes[key]))
+                cursor.execute("UPDATE layout_itens SET Palavra_Busca=%s, Ordem=%s, Exportar_Excel=%s WHERE ID=%s", (palavra, ordem, exportar, existentes[key]))
                 pulados += 1
             except: erros += 1
         else:
             try:
-                cursor.execute("INSERT INTO layout_itens (Grupo_ID, Nome_Item_Excel, Palavra_Busca, Ordem, Exportar_Excel) VALUES (?, ?, ?, ?, ?)", (grupo_id, nome_item, palavra, ordem, exportar))
+                cursor.execute("INSERT INTO layout_itens (Grupo_ID, Nome_Item_Excel, Palavra_Busca, Ordem, Exportar_Excel) VALUES (%s, %s, %s, %s, %s)", (grupo_id, nome_item, palavra, ordem, exportar))
                 inseridos += 1
                 existentes[key] = cursor.lastrowid
             except: erros += 1
@@ -1972,7 +2068,7 @@ def importar_itens_lote(df) -> dict:
 def listar_dados(tabela):
 
 
-    df = pd.read_sql(f"SELECT * FROM {tabela}", engine)
+    df = ajustar_colunas(pd.read_sql(f"SELECT * FROM {tabela}", engine))
 
     return df
 
@@ -1988,7 +2084,7 @@ def listar_dados(tabela):
 
 def salvar_sessao(servico_id: int, session_data: dict) -> None:
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -2006,13 +2102,13 @@ def salvar_sessao(servico_id: int, session_data: dict) -> None:
 
     # Encerra qualquer sessão ativa anterior do mesmo serviço
 
-    cursor.execute("UPDATE servicos_sessoes SET Status = 'Substituída' WHERE Servico_ID = ? AND Status = 'Ativa'", (servico_id,))
+    cursor.execute("UPDATE servicos_sessoes SET Status = 'Substituída' WHERE Servico_ID = %s AND Status = 'Ativa'", (servico_id,))
 
     
 
     # Insere sempre uma nova linha como 'Ativa'
 
-    cursor.execute("INSERT INTO servicos_sessoes (Servico_ID, Session_Data, Data_Login, Status) VALUES (?, ?, ?, 'Ativa')", (servico_id, data_cripto, agora))
+    cursor.execute("INSERT INTO servicos_sessoes (Servico_ID, Session_Data, Data_Login, Status) VALUES (%s, %s, %s, 'Ativa')", (servico_id, data_cripto, agora))
 
     conn.commit()
 
@@ -2022,7 +2118,7 @@ def salvar_sessao(servico_id: int, session_data: dict) -> None:
 
 def obter_sessao_ativa(servico_id: int) -> dict:
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -2030,7 +2126,7 @@ def obter_sessao_ativa(servico_id: int) -> dict:
 
     # Busca o tempo limite configurado
 
-    cursor.execute("SELECT Tempo_Expiracao_Horas FROM servicos WHERE ID = ?", (servico_id,))
+    cursor.execute("SELECT Tempo_Expiracao_Horas FROM servicos WHERE ID = %s", (servico_id,))
 
     row_ser = cursor.fetchone()
 
@@ -2038,7 +2134,7 @@ def obter_sessao_ativa(servico_id: int) -> dict:
 
     
 
-    cursor.execute("SELECT ID, Session_Data, Data_Login FROM servicos_sessoes WHERE Servico_ID = ? AND Status = 'Ativa' ORDER BY ID DESC LIMIT 1", (servico_id,))
+    cursor.execute("SELECT ID, Session_Data, Data_Login FROM servicos_sessoes WHERE Servico_ID = %s AND Status = 'Ativa' ORDER BY ID DESC LIMIT 1", (servico_id,))
 
     row = cursor.fetchone()
 
@@ -2080,9 +2176,10 @@ def obter_sessao_ativa(servico_id: int) -> dict:
 
             # Sessão expirada
 
-            conn = sqlite3.connect(DB_FILE)
+            conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
-            conn.execute("UPDATE servicos_sessoes SET Status = ? WHERE ID = ?", (f'Expirada ({tempo_horas}h)', sessao_db_id))
+            cursor = conn.cursor()
+            cursor.execute("UPDATE servicos_sessoes SET Status = %s WHERE ID = %s", (f'Expirada ({tempo_horas}h)', sessao_db_id))
 
             conn.commit()
 
@@ -2108,9 +2205,10 @@ def obter_sessao_ativa(servico_id: int) -> dict:
 
         # Em caso de erro de parse, encerra por segurança
 
-        conn = sqlite3.connect(DB_FILE)
+        conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
-        conn.execute("UPDATE servicos_sessoes SET Status = 'Erro Parse' WHERE ID = ?", (sessao_db_id,))
+        cursor = conn.cursor()
+        cursor.execute("UPDATE servicos_sessoes SET Status = 'Erro Parse' WHERE ID = %s", (sessao_db_id,))
 
         conn.commit()
 
@@ -2122,11 +2220,11 @@ def obter_sessao_ativa(servico_id: int) -> dict:
 
 def limpar_sessao(servico_id: int) -> None:
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
-    cursor.execute("UPDATE servicos_sessoes SET Status = 'Encerrada' WHERE Servico_ID = ? AND Status = 'Ativa'", (servico_id,))
+    cursor.execute("UPDATE servicos_sessoes SET Status = 'Encerrada' WHERE Servico_ID = %s AND Status = 'Ativa'", (servico_id,))
 
     conn.commit()
 
@@ -2136,11 +2234,11 @@ def limpar_sessao(servico_id: int) -> None:
 
 def excluir_historico_sessao(sessao_id: int) -> None:
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
-    cursor.execute("DELETE FROM servicos_sessoes WHERE ID = ?", (sessao_id,))
+    cursor.execute("DELETE FROM servicos_sessoes WHERE ID = %s", (sessao_id,))
 
     conn.commit()
 
@@ -2150,7 +2248,7 @@ def excluir_historico_sessao(sessao_id: int) -> None:
 
 def limpar_historico_inativo() -> None:
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
@@ -2164,11 +2262,11 @@ def limpar_historico_inativo() -> None:
 
 def atualizar_status_sessao(sessao_id: int, status: str) -> None:
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
 
     cursor = conn.cursor()
 
-    cursor.execute("UPDATE servicos_sessoes SET Status = ? WHERE ID = ?", (status, sessao_id))
+    cursor.execute("UPDATE servicos_sessoes SET Status = %s WHERE ID = %s", (status, sessao_id))
 
     conn.commit()
 
@@ -2180,52 +2278,52 @@ def atualizar_status_sessao(sessao_id: int, status: str) -> None:
 
 def listar_layouts() -> pd.DataFrame:
     try:
-        return pd.read_sql("SELECT * FROM layouts ORDER BY Nome_Layout", engine)
+        return ajustar_colunas(pd.read_sql("SELECT * FROM layouts ORDER BY Nome_Layout", engine))
     except:
         return pd.DataFrame()
 
 def salvar_layout(nome: str) -> bool:
     nome = nome.strip()
     if not nome: return False
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM layouts WHERE LOWER(Nome_Layout) = LOWER(?)", (nome,))
+    cursor.execute("SELECT 1 FROM layouts WHERE LOWER(Nome_Layout) = LOWER(%s)", (nome,))
     if cursor.fetchone():
         conn.close()
         return False
-    cursor.execute("INSERT INTO layouts (Nome_Layout) VALUES (?)", (nome,))
+    cursor.execute("INSERT INTO layouts (Nome_Layout) VALUES (%s)", (nome,))
     conn.commit()
     conn.close()
     return True
 
 def excluir_layout(layout_id: int) -> bool:
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM servicos WHERE Layout_ID = ?", (layout_id,))
+    cursor.execute("SELECT 1 FROM servicos WHERE Layout_ID = %s", (layout_id,))
     if cursor.fetchone():
         conn.close()
         return False
-    cursor.execute("DELETE FROM layouts WHERE ID = ?", (layout_id,))
+    cursor.execute("DELETE FROM layouts WHERE ID = %s", (layout_id,))
     conn.commit()
     conn.close()
     return True
 
 def listar_grupos(layout_id: int) -> pd.DataFrame:
     try:
-        return pd.read_sql("SELECT * FROM layout_grupos WHERE Layout_ID = ? ORDER BY Ordem", engine, params=(layout_id,))
+        return ajustar_colunas(pd.read_sql("SELECT * FROM layout_grupos WHERE Layout_ID = %s ORDER BY Ordem", engine, params=(layout_id,)))
     except:
         return pd.DataFrame()
 
 def salvar_grupo(layout_id: int, nome: str, ordem: int, tem_itens: int) -> bool:
     nome = nome.strip().upper()
     if not nome: return False
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM layout_grupos WHERE Layout_ID = ? AND Nome_Grupo = ?", (layout_id, nome))
+    cursor.execute("SELECT 1 FROM layout_grupos WHERE Layout_ID = %s AND Nome_Grupo = %s", (layout_id, nome))
     if cursor.fetchone():
         conn.close()
         return False
-    cursor.execute("INSERT INTO layout_grupos (Layout_ID, Nome_Grupo, Ordem, Tem_Itens) VALUES (?, ?, ?, ?)", 
+    cursor.execute("INSERT INTO layout_grupos (Layout_ID, Nome_Grupo, Ordem, Tem_Itens) VALUES (%s, %s, %s, %s)", 
                    (layout_id, nome, ordem, tem_itens))
     conn.commit()
     conn.close()
@@ -2234,41 +2332,41 @@ def salvar_grupo(layout_id: int, nome: str, ordem: int, tem_itens: int) -> bool:
 def atualizar_grupo(grupo_id: int, layout_id: int, nome: str, ordem: int, tem_itens: int) -> bool:
     nome = nome.strip().upper()
     if not nome: return False
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM layout_grupos WHERE Layout_ID = ? AND Nome_Grupo = ? AND ID != ?", (layout_id, nome, grupo_id))
+    cursor.execute("SELECT 1 FROM layout_grupos WHERE Layout_ID = %s AND Nome_Grupo = %s AND ID != %s", (layout_id, nome, grupo_id))
     if cursor.fetchone():
         conn.close()
         return False
-    cursor.execute("UPDATE layout_grupos SET Nome_Grupo = ?, Ordem = ?, Tem_Itens = ? WHERE ID = ?", 
+    cursor.execute("UPDATE layout_grupos SET Nome_Grupo = %s, Ordem = %s, Tem_Itens = %s WHERE ID = %s", 
                    (nome, ordem, tem_itens, grupo_id))
     conn.commit()
     conn.close()
     return True
 
 def excluir_grupo(grupo_id: int) -> bool:
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM layout_grupos WHERE ID = ?", (grupo_id,))
+    cursor.execute("DELETE FROM layout_grupos WHERE ID = %s", (grupo_id,))
     conn.commit()
     conn.close()
     return True
 
 def listar_itens(grupo_id: int) -> pd.DataFrame:
     try:
-        return pd.read_sql("SELECT * FROM layout_itens WHERE Grupo_ID = ? ORDER BY Ordem", engine, params=(grupo_id,))
+        return ajustar_colunas(pd.read_sql("SELECT * FROM layout_itens WHERE Grupo_ID = %s ORDER BY Ordem", engine, params=(grupo_id,)))
     except:
         return pd.DataFrame()
 
 def validar_nome_coluna_layout(layout_id: int, nome_coluna: str) -> bool:
     nome_coluna = nome_coluna.strip().upper()
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
     query = """
     SELECT 1 
     FROM layout_itens li
     JOIN layout_grupos lg ON li.Grupo_ID = lg.ID
-    WHERE lg.Layout_ID = ? AND UPPER(li.Nome_Item_Excel) = ?
+    WHERE lg.Layout_ID = %s AND UPPER(li.Nome_Item_Excel) = %s
     """
     cursor.execute(query, (layout_id, nome_coluna))
     existe = cursor.fetchone() is not None
@@ -2283,9 +2381,9 @@ def salvar_item(layout_id: int, grupo_id: int, nome_item_excel: str, palavra_bus
     if not validar_nome_coluna_layout(layout_id, nome_item_excel):
         return False
         
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO layout_itens (Grupo_ID, Nome_Item_Excel, Palavra_Busca, Ordem, Exportar_Excel) VALUES (?, ?, ?, ?, ?)", 
+    cursor.execute("INSERT INTO layout_itens (Grupo_ID, Nome_Item_Excel, Palavra_Busca, Ordem, Exportar_Excel) VALUES (%s, %s, %s, %s, %s)", 
                    (grupo_id, nome_item_excel, palavra_busca, ordem, exportar_excel))
     conn.commit()
     conn.close()
@@ -2293,10 +2391,10 @@ def salvar_item(layout_id: int, grupo_id: int, nome_item_excel: str, palavra_bus
 
 def atualizar_exportacao_item(item_id: int, exportar_excel: int) -> bool:
     try:
-        import sqlite3
-        conn = sqlite3.connect(DB_FILE)
+        import psycopg2
+        conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
         cursor = conn.cursor()
-        cursor.execute("UPDATE layout_itens SET Exportar_Excel = ? WHERE ID = ?", (exportar_excel, item_id))
+        cursor.execute("UPDATE layout_itens SET Exportar_Excel = %s WHERE ID = %s", (exportar_excel, item_id))
         conn.commit()
         conn.close()
         return True
@@ -2308,27 +2406,27 @@ def atualizar_item(item_id: int, layout_id: int, nome_item_excel: str, palavra_b
     palavra_busca = palavra_busca.strip()
     if not nome_item_excel or not palavra_busca: return False
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
     cursor.execute('''
         SELECT COUNT(1) FROM layout_itens i
         JOIN layout_grupos g ON i.Grupo_ID = g.ID
-        WHERE g.Layout_ID = ? AND i.Nome_Item_Excel = ? AND i.ID != ?
+        WHERE g.Layout_ID = %s AND i.Nome_Item_Excel = %s AND i.ID != %s
     ''', (layout_id, nome_item_excel, item_id))
     if cursor.fetchone()[0] > 0:
         conn.close()
         return False
         
-    cursor.execute("UPDATE layout_itens SET Nome_Item_Excel = ?, Palavra_Busca = ?, Ordem = ?, Exportar_Excel = ? WHERE ID = ?", 
+    cursor.execute("UPDATE layout_itens SET Nome_Item_Excel = %s, Palavra_Busca = %s, Ordem = %s, Exportar_Excel = %s WHERE ID = %s", 
                    (nome_item_excel, palavra_busca, ordem, exportar_excel, item_id))
     conn.commit()
     conn.close()
     return True
 
 def excluir_item(item_id: int) -> bool:
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM layout_itens WHERE ID = ?", (item_id,))
+    cursor.execute("DELETE FROM layout_itens WHERE ID = %s", (item_id,))
     conn.commit()
     conn.close()
     return True
