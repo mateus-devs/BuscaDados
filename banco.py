@@ -2491,6 +2491,20 @@ def salvar_layout(nome: str) -> bool:
     conn.close()
     return True
 
+def atualizar_nome_layout(layout_id: int, novo_nome: str) -> bool:
+    novo_nome = novo_nome.strip()
+    if not novo_nome: return False
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM layouts WHERE LOWER(Nome_Layout) = LOWER(%s) AND ID != %s", (novo_nome, layout_id))
+    if cursor.fetchone():
+        conn.close()
+        return False
+    cursor.execute("UPDATE layouts SET Nome_Layout = %s WHERE ID = %s", (novo_nome, layout_id))
+    conn.commit()
+    conn.close()
+    return True
+
 def excluir_layout(layout_id: int) -> bool:
     conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
     cursor = conn.cursor()

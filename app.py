@@ -1565,7 +1565,7 @@ elif menu == "📄 Manutenção de Layouts":
     st.info("Crie moldes dinâmicos para a extração inteligente de dados dos Boletins de Ocorrência.")
     
     # 1. Escolher ou Criar Layout
-    col_l1, col_l2, col_l3 = st.columns([3, 1, 1])
+    col_l1, col_l2, col_l3, col_l4 = st.columns([3.2, 1.6, 1.6, 1.6])
     layouts_df = db.listar_layouts()
     opcoes_layout = ["-- Selecione um Layout --", "➕ Criar Novo Layout..."]
     
@@ -1589,16 +1589,21 @@ elif menu == "📄 Manutenção de Layouts":
         # Pega o ID do layout selecionado
         layout_id = int(layouts_df[layouts_df["Nome_Layout"] == layout_selecionado]["ID"].values[0])
         
-        # Botão de exclusão do layout
+        # Popover para renomear o layout selecionado
         with col_l2:
             st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-            if st.button("🗑️ Excluir Layout Inteiro", use_container_width=True):
-                if db.excluir_layout(layout_id):
-                    st.success("Layout excluído!")
-                    st.rerun()
-                else:
-                    st.error("Não é possível excluir este layout (está em uso por algum serviço).")
-                    
+            with st.popover("✏️ Renomear Layout", use_container_width=True):
+                st.markdown(f"**Renomear Layout:** {layout_selecionado}")
+                novo_nome_layout = st.text_input("Novo Nome do Layout", value=layout_selecionado, key="input_rename_layout_nome")
+                if st.button("Salvar Nome", use_container_width=True):
+                    if not novo_nome_layout.strip():
+                        st.error("O nome não pode ser vazio.")
+                    elif db.atualizar_nome_layout(layout_id, novo_nome_layout.strip()):
+                        st.success("Layout renomeado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.error("Erro ao renomear o layout. Verifique se o nome já existe.")
+                        
         # Popover para clonar o layout selecionado
         with col_l3:
             st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
@@ -1614,6 +1619,16 @@ elif menu == "📄 Manutenção de Layouts":
                         st.rerun()
                     else:
                         st.error("Erro ao clonar o layout. Verifique se o nome já existe.")
+
+        # Botão de exclusão do layout
+        with col_l4:
+            st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+            if st.button("🗑️ Excluir Layout Inteiro", use_container_width=True):
+                if db.excluir_layout(layout_id):
+                    st.success("Layout excluído!")
+                    st.rerun()
+                else:
+                    st.error("Não é possível excluir este layout (está em uso por algum serviço).")
                     
         # Central de Ajuda de Chaves Especiais e Fórmulas
         import extrair_bo as ex_bo
