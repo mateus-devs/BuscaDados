@@ -439,25 +439,24 @@ if menu == "🏙️ Manutenção de Municípios":
             col_ant, col_e1, col_pag, col_e2, col_prox = st.columns([1, 1, 0.8, 1, 1])
             if col_ant.button("⬅️ Página Anterior", disabled=(st.session_state.pagina_mun <= 1), use_container_width=True, key="btn_ant_mun"):
                 st.session_state.pagina_mun -= 1
-                st.session_state.combo_pag_mun = st.session_state.pagina_mun
                 st.rerun()
                 
-            def set_page_mun():
-                st.session_state.pagina_mun = st.session_state.combo_pag_mun
+            def set_page_mun(key):
+                st.session_state.pagina_mun = st.session_state[key]
                 
             with col_pag:
                 st.selectbox(
                     "Pular para a página", 
                     options=range(1, total_paginas_mun + 1), 
                     index=st.session_state.pagina_mun - 1,
-                    key="combo_pag_mun",
+                    key=f"combo_pag_mun_{st.session_state.pagina_mun}",
                     on_change=set_page_mun,
+                    args=(f"combo_pag_mun_{st.session_state.pagina_mun}",),
                     label_visibility="collapsed"
                 )
                 
             if col_prox.button("Próxima Página ➡️", disabled=(st.session_state.pagina_mun >= total_paginas_mun), use_container_width=True, key="btn_prox_mun"):
                 st.session_state.pagina_mun += 1
-                st.session_state.combo_pag_mun = st.session_state.pagina_mun
                 st.rerun()
 
     elif st.session_state.sub_tela_mun == "formulario":
@@ -642,25 +641,24 @@ elif menu == "🏘️ Manutenção de Bairros":
                 col_ant, col_e1, col_pag, col_e2, col_prox = st.columns([1, 1, 0.8, 1, 1])
                 if col_ant.button("⬅️ Página Anterior", disabled=(st.session_state.pagina_bai <= 1), use_container_width=True, key="btn_ant_bai"):
                     st.session_state.pagina_bai -= 1
-                    st.session_state.combo_pag_bai = st.session_state.pagina_bai
                     st.rerun()
                     
-                def set_page_bai():
-                    st.session_state.pagina_bai = st.session_state.combo_pag_bai
+                def set_page_bai(key):
+                    st.session_state.pagina_bai = st.session_state[key]
                     
                 with col_pag:
                     st.selectbox(
                         "Pular para a página", 
                         options=range(1, total_paginas_bai + 1), 
                         index=st.session_state.pagina_bai - 1,
-                        key="combo_pag_bai",
+                        key=f"combo_pag_bai_{st.session_state.pagina_bai}",
                         on_change=set_page_bai,
+                        args=(f"combo_pag_bai_{st.session_state.pagina_bai}",),
                         label_visibility="collapsed"
                     )
                     
                 if col_prox.button("Próxima Página ➡️", disabled=(st.session_state.pagina_bai >= total_paginas_bai), use_container_width=True, key="btn_prox_bai"):
                     st.session_state.pagina_bai += 1
-                    st.session_state.combo_pag_bai = st.session_state.pagina_bai
                     st.rerun()
 
     elif st.session_state.sub_tela_bai == "formulario":
@@ -900,25 +898,24 @@ elif menu == "🚔 Manutenção de UPMs":
             col_ant, col_e1, col_pag, col_e2, col_prox = st.columns([1, 1, 0.8, 1, 1])
             if col_ant.button("⬅️ Página Anterior", disabled=(st.session_state.pagina_upm <= 1), use_container_width=True, key="btn_ant_upm"):
                 st.session_state.pagina_upm -= 1
-                st.session_state.combo_pag_upm = st.session_state.pagina_upm
                 st.rerun()
                 
-            def set_page_upm():
-                st.session_state.pagina_upm = st.session_state.combo_pag_upm
+            def set_page_upm(key):
+                st.session_state.pagina_upm = st.session_state[key]
                 
             with col_pag:
                 st.selectbox(
                     "Pular para a página", 
                     options=range(1, total_paginas_upm + 1), 
                     index=st.session_state.pagina_upm - 1,
-                    key="combo_pag_upm",
+                    key=f"combo_pag_upm_{st.session_state.pagina_upm}",
                     on_change=set_page_upm,
+                    args=(f"combo_pag_upm_{st.session_state.pagina_upm}",),
                     label_visibility="collapsed"
                 )
                 
             if col_prox.button("Próxima Página ➡️", disabled=(st.session_state.pagina_upm >= total_paginas_upm), use_container_width=True, key="btn_prox_upm"):
                 st.session_state.pagina_upm += 1
-                st.session_state.combo_pag_upm = st.session_state.pagina_upm
                 st.rerun()
 
     elif st.session_state.sub_tela_upm == "formulario":
@@ -1282,16 +1279,17 @@ elif menu == "🌐 Manutenção de Serviços":
             if col_ant.button("⬅️ Página Anterior", disabled=(st.session_state.pagina_ser <= 1), use_container_width=True, key="btn_ant_ser"):
                 st.session_state.pagina_ser -= 1; st.rerun()
                 
-            def set_page_ser():
-                st.session_state.pagina_ser = st.session_state.combo_pag_ser
+            def set_page_ser(key):
+                st.session_state.pagina_ser = st.session_state[key]
                 
             with col_pag:
                 st.selectbox(
                     "Pular para a página", 
                     options=range(1, total_paginas_ser + 1), 
                     index=st.session_state.pagina_ser - 1,
-                    key="combo_pag_ser",
+                    key=f"combo_pag_ser_{st.session_state.pagina_ser}",
                     on_change=set_page_ser,
+                    args=(f"combo_pag_ser_{st.session_state.pagina_ser}",),
                     label_visibility="collapsed"
                 )
                 
