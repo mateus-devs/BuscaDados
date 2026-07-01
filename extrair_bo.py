@@ -343,7 +343,7 @@ def carregar_dados_banco():
     df_m = db.listar_dados("municipios")
     lista_municipios = df_m["Municipio"].tolist() if not df_m.empty else []
     
-    df_b = db.listar_dados("bairros")
+    df_b = db.listar_bairros_com_municipio()
     bairros_por_mun = {}
     if not df_b.empty:
         for _, row in df_b.iterrows():
