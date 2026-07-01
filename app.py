@@ -2189,12 +2189,19 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
             if st.button("▶️ Iniciar Processamento", use_container_width=True):
                 st.session_state.processar_clicado = True
                 st.session_state.interromper = False
+                # Limpa estados de execuções anteriores na sessão
+                for k in ['df_upload_proc', 'qtd_bairros_corrigidos', 'qtd_municipios_corrigidos', 'qtd_upms_injetadas', 'colunas_data_fato', 'linhas_classificadas', 'linhas_mantidas', 'erros_ia', 'lista_erros_ia', 'lista_sucesso_ia', 'logs_ordenados']:
+                    if k in st.session_state:
+                        del st.session_state[k]
         with col_btn2:
             if st.button("⏹️ Interromper / Cancelar", use_container_width=True):
                 st.session_state.interromper = True
                 st.session_state.processar_clicado = False
+                st.rerun()
                 
-        if not st.session_state.get('processar_clicado', False):
+        # Permite continuar o fluxo se foi clicado ou se foi interrompido mas já possui dados processados parciais
+        pode_exibir_resultado = st.session_state.get('interromper', False) and 'df_upload_proc' in st.session_state
+        if not st.session_state.get('processar_clicado', False) and not pode_exibir_resultado:
             if st.session_state.get('interromper', False):
                 st.warning("⚠️ Processamento interrompido / cancelado com sucesso!")
             else:
@@ -2309,88 +2316,122 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                 if df_upload.empty:
                     st.warning("⚠️ Atenção: A planilha enviada não contém linhas de dados válidas (bairro e município vazios).")
                 else:
-                    # Obtém o cache de UPMs na memória
-                    # Obtém os caches na memória do banco de dados
-                    mapa_upms = db.obter_mapeamento_upms()
-                    mapa_nomes_mun = db.obter_mapeamento_nomes_municipios()
-                    mapa_nomes_bai = db.obter_mapeamento_nomes_bairros()
-                    mapa_alternativos_bai = db.obter_mapeamento_alternativo_bairros()
-                    mapa_mun_todos = db.obter_municipios_com_bairro_todos_unico()
+                    # Inicializa variáveis locais de estatísticas de IA com valor padrão para evitar NameError
+                    linhas_classificadas = 0
+                    linhas_mantidas = 0
+                    erros_ia = 0
+                    lista_erros_ia = []
+                    lista_sucesso_ia = []
+                    logs_ordenados = []
                     
-                    lista_upms = []
-                    novos_bairros = []
-                    novos_municipios = []
-                    
-                    qtd_bairros_corrigidos = 0
-                    qtd_municipios_corrigidos = 0
-                    qtd_upms_injetadas = 0
-                    
-                    for idx, row in df_upload.iterrows():
-                        b_orig = row[col_bairro]
-                        m_orig = row[col_municipio]
+                    if st.session_state.get('processar_clicado', False):
+                        # Obtém o cache de UPMs na memória
+                        # Obtém os caches na memória do banco de dados
+                        mapa_upms = db.obter_mapeamento_upms()
+                        mapa_nomes_mun = db.obter_mapeamento_nomes_municipios()
+                        mapa_nomes_bai = db.obter_mapeamento_nomes_bairros()
+                        mapa_alternativos_bai = db.obter_mapeamento_alternativo_bairros()
+                        mapa_mun_todos = db.obter_municipios_com_bairro_todos_unico()
                         
-                        # 1. Padroniza e corrige o Município conforme as regras do usuário (TRIM + UPPER + apelidos)
-                        m_padrao = db.padronizar_municipio(m_orig)
-                        novos_municipios.append(m_padrao)
+                        lista_upms = []
+                        novos_bairros = []
+                        novos_municipios = []
                         
-                        # 2. Padroniza e corrige o Bairro (TRIM + UPPER + mojibake)
-                        b_padrao = db.corrigir_mojibake(b_orig).strip().upper()
+                        qtd_bairros_corrigidos = 0
+                        qtd_municipios_corrigidos = 0
+                        qtd_upms_injetadas = 0
                         
-                        # 3. Normaliza para fazer a busca no banco de dados
-                        b_norm = db.normalizar_texto(b_padrao)
-                        m_norm = db.normalizar_texto(m_padrao)
-                        
-                        # 4. Mapeamento de equivalências para obter o Bairro Oficial (sempre em UPPER)
-                        if (b_norm, m_norm) in mapa_nomes_bai:
-                            b_oficial = mapa_nomes_bai[(b_norm, m_norm)].upper().strip()
-                        elif (b_norm, m_norm) in mapa_alternativos_bai:
-                            b_oficial = mapa_alternativos_bai[(b_norm, m_norm)].upper().strip()
-                            # Atualiza a chave normalizada de busca do bairro para obter a UPM correta
-                            b_norm = db.normalizar_texto(b_oficial)
-                        else:
-                            b_oficial = b_padrao
+                        for idx, row in df_upload.iterrows():
+                            b_orig = row[col_bairro]
+                            m_orig = row[col_municipio]
                             
-                        novos_bairros.append(b_oficial)
-                        
-                        # 5. Determina a UPM correspondente usando a chave de bairro (oficial ou equivalente)
-                        upm_val = mapa_upms.get((b_norm, m_norm))
-                        if not upm_val:
-                            # Se não achou Bairro+Municipio, mas o Município possui apenas 'TODOS' cadastrado
-                            if m_norm in mapa_mun_todos:
-                                upm_val = mapa_mun_todos[m_norm]
+                            # 1. Padroniza e corrige o Município conforme as regras do usuário (TRIM + UPPER + apelidos)
+                            m_padrao = db.padronizar_municipio(m_orig)
+                            novos_municipios.append(m_padrao)
+                            
+                            # 2. Padroniza e corrige o Bairro (TRIM + UPPER + mojibake)
+                            b_padrao = db.corrigir_mojibake(b_orig).strip().upper()
+                            
+                            # 3. Normaliza para fazer a busca no banco de dados
+                            b_norm = db.normalizar_texto(b_padrao)
+                            m_norm = db.normalizar_texto(m_padrao)
+                            
+                            # 4. Mapeamento de equivalências para obter o Bairro Oficial (sempre em UPPER)
+                            if (b_norm, m_norm) in mapa_nomes_bai:
+                                b_oficial = mapa_nomes_bai[(b_norm, m_norm)].upper().strip()
+                            elif (b_norm, m_norm) in mapa_alternativos_bai:
+                                b_oficial = mapa_alternativos_bai[(b_norm, m_norm)].upper().strip()
+                                # Atualiza a chave normalizada de busca do bairro para obter a UPM correta
+                                b_norm = db.normalizar_texto(b_oficial)
                             else:
-                                upm_val = "NI"
+                                b_oficial = b_padrao
                                 
-                        if str(b_orig).strip().upper() != b_oficial:
-                            qtd_bairros_corrigidos += 1
-                        if str(m_orig).strip().upper() != m_padrao:
-                            qtd_municipios_corrigidos += 1
-                        if upm_val != "NI":
-                            qtd_upms_injetadas += 1
-                                
-                        lista_upms.append(upm_val)
+                            novos_bairros.append(b_oficial)
                             
-                    # Atualiza o DataFrame com as strings higienizadas e corretas
-                    df_upload[col_bairro] = novos_bairros
-                    df_upload[col_municipio] = novos_municipios
-                    
-                    # Cria a nova coluna UPM na primeira posição para ser facilmente visível
-                    if "UPM" in df_upload.columns:
-                        df_upload["UPM"] = lista_upms
+                            # 5. Determina a UPM correspondente usando a chave de bairro (oficial ou equivalente)
+                            upm_val = mapa_upms.get((b_norm, m_norm))
+                            if not upm_val:
+                                # Se não achou Bairro+Municipio, mas o Município possui apenas 'TODOS' cadastrado
+                                if m_norm in mapa_mun_todos:
+                                    upm_val = mapa_mun_todos[m_norm]
+                                else:
+                                    upm_val = "NI"
+                                    
+                            if str(b_orig).strip().upper() != b_oficial:
+                                qtd_bairros_corrigidos += 1
+                            if str(m_orig).strip().upper() != m_padrao:
+                                qtd_municipios_corrigidos += 1
+                            if upm_val != "NI":
+                                qtd_upms_injetadas += 1
+                                    
+                            lista_upms.append(upm_val)
+                                
+                        # Atualiza o DataFrame com as strings higienizadas e corretas
+                        df_upload[col_bairro] = novos_bairros
+                        df_upload[col_municipio] = novos_municipios
+                        
+                        # Cria a nova coluna UPM na primeira posição para ser facilmente visível
+                        if "UPM" in df_upload.columns:
+                            df_upload["UPM"] = lista_upms
+                        else:
+                            df_upload.insert(0, "UPM", lista_upms)
+                            
+                        # =========================================================
+                        # PASSO EXTRA: CLASSIFICAÇÃO INTELIGENTE (IA) TIPO LOCAL 2
+                        # =========================================================
+                        col_narrativa = next((c for c in df_upload.columns if db.normalizar_texto(c) == "narrativa"), None)
+                        col_tipo2 = next((c for c in df_upload.columns if db.normalizar_texto(c).replace(" ", "") == "tipolocal2"), None)
+                        
+                        if col_tipo2:
+                            df_upload[col_tipo2] = df_upload[col_tipo2].astype(object)
+                            
+                        st.session_state.df_upload_proc = df_upload
+                        st.session_state.qtd_bairros_corrigidos = qtd_bairros_corrigidos
+                        st.session_state.qtd_municipios_corrigidos = qtd_municipios_corrigidos
+                        st.session_state.qtd_upms_injetadas = qtd_upms_injetadas
+                        st.session_state.colunas_data_fato = colunas_data
+                        st.session_state.linhas_classificadas = 0
+                        st.session_state.linhas_mantidas = 0
+                        st.session_state.erros_ia = 0
+                        st.session_state.lista_erros_ia = []
+                        st.session_state.lista_sucesso_ia = []
+                        st.session_state.logs_ordenados = []
                     else:
-                        df_upload.insert(0, "UPM", lista_upms)
+                        # Recupera os dados parciais da sessão
+                        df_upload = st.session_state.df_upload_proc
+                        qtd_bairros_corrigidos = st.session_state.get('qtd_bairros_corrigidos', 0)
+                        qtd_municipios_corrigidos = st.session_state.get('qtd_municipios_corrigidos', 0)
+                        qtd_upms_injetadas = st.session_state.get('qtd_upms_injetadas', 0)
+                        colunas_data = st.session_state.get('colunas_data_fato', [])
                         
-                    # =========================================================
-                    # PASSO EXTRA: CLASSIFICAÇÃO INTELIGENTE (IA) TIPO LOCAL 2
-                    # =========================================================
-                    col_narrativa = next((c for c in df_upload.columns if db.normalizar_texto(c) == "narrativa"), None)
-                    col_tipo2 = next((c for c in df_upload.columns if db.normalizar_texto(c).replace(" ", "") == "tipolocal2"), None)
-                    
-                    if col_tipo2:
-                        df_upload[col_tipo2] = df_upload[col_tipo2].astype(object)
-                        
-                    if usar_ia and col_narrativa and col_tipo2 and ia.GENAI_DISPONIVEL and ia.GCP_PROJECT_ID and db.obter_prompt_ativo("Tipo Local"):
-                        st.info("🧠 Iniciando Classificação Inteligente de Tipo Local via IA...")
+                        linhas_classificadas = st.session_state.get('linhas_classificadas', 0)
+                        linhas_mantidas = st.session_state.get('linhas_mantidas', 0)
+                        erros_ia = st.session_state.get('erros_ia', 0)
+                        lista_erros_ia = st.session_state.get('lista_erros_ia', [])
+                        logs_ordenados = st.session_state.get('logs_ordenados', [])
+                        lista_sucesso_ia = st.session_state.get('lista_sucesso_ia', [])
+                    if st.session_state.get('processar_clicado', False) and usar_ia and col_narrativa and col_tipo2 and ia.GENAI_DISPONIVEL and ia.GCP_PROJECT_ID and db.obter_prompt_ativo("Tipo Local"):
+                        st.info("🧠 Inicializando Classificação Cognitiva de Tipo Local via IA...")
                         tipos_validos = db.obter_set_tipos_local()
                         linhas_classificadas = 0
                         linhas_mantidas = 0
@@ -2398,86 +2439,133 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                         lista_erros_ia = []
                         lista_sucesso_ia = []
                         
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
-                        log_container = st.empty()
-                        
-                        with log_container.container():
-                            with st.expander("📊 Log ao vivo das classificações da IA", expanded=True):
-                                st.info("⏳ Inicializando motor de Inteligência Artificial e aguardando a primeira análise...")
-                                
-                        total_linhas = len(df_upload)
-                        
-                        for idx_ia, (row_idx, row_data) in enumerate(df_upload.iterrows()):
-                            if st.session_state.get('interromper', False):
-                                st.warning("⚠️ Processamento de Inteligência Artificial interrompido pelo usuário!")
-                                break
-                                
+                        # Filtra em memória as ocorrências que realmente precisam de classificação por IA
+                        indices_para_classificar = []
+                        for row_idx, row_data in df_upload.iterrows():
                             valor_atual = str(row_data[col_tipo2]).strip().upper() if pd.notna(row_data[col_tipo2]) else ""
-                            
-                            # Condição: se vazio ou se não for um tipo válido, chama a IA
                             if not valor_atual or valor_atual not in tipos_validos:
                                 narrativa = row_data[col_narrativa]
                                 if pd.notna(narrativa) and str(narrativa).strip():
-                                    def callback_log(msg):
-                                        status_text.warning(msg)
-                                        
-                                    texto_seguro = ia.anonimizar_texto(str(narrativa))
-                                    lista_sucesso_ia.append(f"🔒 Narrativa Anonimizada (Linha {idx_ia+1}): {texto_seguro}")
-                                        
-                                    status_text.text(f"Classificando linha {idx_ia+1} de {total_linhas}...")
-                                    novo_tipo = ia.classificar("Tipo Local", str(narrativa), log_callback=callback_log)
-                                    
-                                    if novo_tipo.startswith("ERRO_"):
-                                        erros_ia += 1
-                                        lista_erros_ia.append(f"Linha {idx_ia+1}: {novo_tipo}")
-                                    elif novo_tipo == "NI":
-                                        # Se a IA não souber classificar, deixamos como estava (não altera a planilha)
-                                        linhas_mantidas += 1
-                                        lista_sucesso_ia.append(f"Linha {idx_ia+1}: Mantido [ {valor_atual if valor_atual else 'VAZIO'} ] -> A IA retornou NI (Não Identificado)")
-                                    else:
-                                        df_upload.at[row_idx, col_tipo2] = novo_tipo
-                                        linhas_classificadas += 1
-                                        lista_sucesso_ia.append(f"Linha {idx_ia+1}: Reclassificado de [ {valor_atual if valor_atual else 'VAZIO'} ] para -> [ {novo_tipo} ]")
+                                    indices_para_classificar.append((row_idx, str(narrativa), valor_atual))
                                 else:
-                                    # Narrativa vazia, mantém o que estava ou deixa vazio
                                     linhas_mantidas += 1
                             else:
-                                linhas_mantidas += 1
-                                
-                            progress_bar.progress((idx_ia + 1) / total_linhas)
+                                    linhas_mantidas += 1
+                                    
+                        total_tarefas = len(indices_para_classificar)
+                        
+                        if total_tarefas > 0:
+                            import concurrent.futures
+                            # 15 workers concorrentes para alta performance aproveitando as cotas do GCP
+                            max_workers = 15
                             
-                            # Atualiza o log ao vivo na tela
-                            if lista_sucesso_ia:
+                            status_text = st.empty()
+                            progress_bar = st.progress(0)
+                            log_container = st.empty()
+                            
+                            # Lista ordenada que guardará o log na posição exata da ocorrência (1-based index)
+                            logs_ordenados = [None] * total_tarefas
+                            
+                            with log_container.container():
+                                with st.expander("📊 Log ao vivo das classificações da IA (Progresso Cronológico)", expanded=True):
+                                    st.info("⏳ Inicializando chamadas paralelas à Inteligência Artificial...")
+                            
+                            # Função auxiliar executada de forma assíncrona nas threads filhas
+                            def processar_linha_ia(row_idx, narrativa, valor_atual, num_tarefa):
+                                texto_seguro = ia.anonimizar_texto(narrativa)
+                                msg_log_inicio = f"🔒 Narrativa Anonimizada (Ocorrência {num_tarefa}): {texto_seguro}"
+                                
+                                def callback_silencioso(msg):
+                                    pass
+                                    
+                                novo_tipo = ia.classificar("Tipo Local", narrativa, log_callback=callback_silencioso)
+                                return row_idx, novo_tipo, valor_atual, msg_log_inicio, num_tarefa
+                            
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                                # Submete as tarefas ao pool
+                                futuros = {
+                                    executor.submit(processar_linha_ia, r_idx, narr, val_at, i + 1): r_idx
+                                    for i, (r_idx, narr, val_at) in enumerate(indices_para_classificar)
+                                }
+                                
+                                finalizados = 0
+                                for futuro in concurrent.futures.as_completed(futuros):
+                                    # Se o usuário clicou para interromper, pára o processamento na thread principal
+                                    if st.session_state.get('interromper', False):
+                                        st.warning("⚠️ Processamento de Inteligência Artificial interrompido pelo usuário!")
+                                        executor.shutdown(wait=False, cancel_futures=True)
+                                        break
+                                        
+                                    try:
+                                        row_idx, novo_tipo, valor_atual, msg_log_inicio, num_tarefa = futuro.result()
+                                        
+                                        msg_final = ""
+                                        if novo_tipo.startswith("ERRO_"):
+                                            erros_ia += 1
+                                            lista_erros_ia.append(f"Ocorrência {num_tarefa}: {novo_tipo}")
+                                            msg_final = f"🔒 Ocorrência {num_tarefa} ({ia.anonimizar_texto(df_upload.at[row_idx, col_narrativa])[:50]}...): Erro na análise ({novo_tipo})"
+                                        elif novo_tipo == "NI":
+                                            linhas_mantidas += 1
+                                            msg_final = f"🔒 Ocorrência {num_tarefa}: Mantido [ {valor_atual if valor_atual else 'VAZIO'} ] -> A IA retornou NI (Não Identificado)"
+                                        else:
+                                            df_upload.at[row_idx, col_tipo2] = novo_tipo
+                                            linhas_classificadas += 1
+                                            msg_final = f"🔒 Ocorrência {num_tarefa}: Reclassificado de [ {valor_atual if valor_atual else 'VAZIO'} ] para -> [ {novo_tipo} ]"
+                                            
+                                        # Armazena na posição correspondente para o log final ordenado
+                                        logs_ordenados[num_tarefa - 1] = msg_final
+                                        
+                                        # Coloca na lista cronológica de log ao vivo para manter o fluxo coerente sem pular números
+                                        lista_sucesso_ia.append(msg_final)
+                                        
+                                        # Sincroniza em tempo real com o session_state para salvar progresso parcial em caso de cancelamento
+                                        st.session_state.df_upload_proc = df_upload
+                                        st.session_state.linhas_classificadas = linhas_classificadas
+                                        st.session_state.linhas_mantidas = linhas_mantidas
+                                        st.session_state.erros_ia = erros_ia
+                                        st.session_state.lista_erros_ia = lista_erros_ia
+                                        st.session_state.lista_sucesso_ia = lista_sucesso_ia
+                                        st.session_state.logs_ordenados = logs_ordenados
+                                        
+                                    except Exception as e:
+                                        erros_ia += 1
+                                        lista_erros_ia.append(f"Erro ao processar ocorrência: {str(e)}")
+                                        
+                                    finalizados += 1
+                                    progress_bar.progress(finalizados / total_tarefas)
+                                    status_text.text(f"Processadas {finalizados} de {total_tarefas} ocorrências...")
+                                    
+                                    # Exibe os logs ao vivo em ordem cronológica de finalização das requisições (sem pular ou sumir)
+                                    with log_container.container():
+                                        with st.expander("📊 Log ao vivo das classificações da IA (Progresso Cronológico)", expanded=True):
+                                            for msg in lista_sucesso_ia[-10:]: # Mostra os últimos 10 processados cronologicamente
+                                                if "Reclassificado" in msg:
+                                                    st.success(msg)
+                                                elif "Erro" in msg or "ERRO" in msg:
+                                                    st.error(msg)
+                                                else:
+                                                    st.warning(msg)
+                                                        
+                            status_text.empty()
+                            progress_bar.empty()
+                            
+                            # Renderiza o log final completo ordenado e fechado
+                            logs_validos_finais = [msg for msg in logs_ordenados if msg is not None]
+                            if logs_validos_finais:
                                 with log_container.container():
-                                    with st.expander("📊 Log ao vivo das classificações da IA", expanded=True):
-                                        for msg in lista_sucesso_ia[-10:]: # Mostra só as últimas 10 para não travar a tela
+                                    with st.expander("📊 Ver log detalhado das classificações da IA (Ordenado)", expanded=False):
+                                        for msg in logs_validos_finais:
                                             if "Reclassificado" in msg:
                                                 st.success(msg)
-                                            elif "Anonimizada" in msg:
-                                                st.info(msg)
+                                            elif "Erro" in msg or "ERRO" in msg:
+                                                st.error(msg)
                                             else:
                                                 st.warning(msg)
-                        
-                        status_text.empty()
-                        progress_bar.empty()
-                        
-                        # Renderiza o log final completo e fechado
-                        if lista_sucesso_ia:
-                            with log_container.container():
-                                with st.expander("📊 Ver log detalhado das classificações da IA", expanded=False):
-                                    for msg in lista_sucesso_ia:
-                                        if "Reclassificado" in msg:
-                                            st.success(msg)
-                                        elif "Anonimizada" in msg:
-                                            st.info(msg)
-                                        else:
-                                            st.warning(msg)
-                                            
-                        if lista_erros_ia:
-                            with st.expander("🚨 Ver detalhes dos erros da IA"):
-                                for erro_msg in lista_erros_ia:
-                                    st.error(erro_msg)
+                                                
+                            if lista_erros_ia:
+                                with st.expander("🚨 Ver detalhes dos erros da IA"):
+                                    for erro_msg in lista_erros_ia:
+                                        st.error(erro_msg)
                                     
                     elif col_narrativa and col_tipo2:
                         motivos_falta = []
@@ -2490,9 +2578,14 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                             
                         st.warning(f"⚠️ Colunas para IA encontradas, mas a classificação foi pulada. Motivos: {', '.join(motivos_falta)}.")
 
+                    # Concluiu o processamento, desativa o flag para evitar re-execuções reativas indesejadas
+                    st.session_state.processar_clicado = False
                     
                     # Mensagem de conclusão compacta e organizada
-                    st.success("🎉 Processamento Concluído com Sucesso!")
+                    if st.session_state.get('interromper', False):
+                        st.warning("⚠️ Processamento Parcial: IA interrompida pelo usuário. Abaixo estão disponíveis os dados analisados até a interrupção.")
+                    else:
+                        st.success("🎉 Processamento Concluído com Sucesso!")
                     qtd_upms_ni = len(df_upload) - qtd_upms_injetadas
                     
                     st.info(f"🎯 **Tratamento (Bairros e Municípios):** {len(df_upload)} linhas | {qtd_municipios_corrigidos} Municípios Higienizados | {qtd_bairros_corrigidos} Bairros Corrigidos | {qtd_upms_injetadas} UPMs Injetadas | {qtd_upms_ni} UPMs 'NI'")

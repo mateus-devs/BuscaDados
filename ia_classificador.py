@@ -192,10 +192,6 @@ def classificar(tipo: str, texto: str, log_callback=None) -> str:
     # 3.5 Remove qualquer caractere corrompido do prompt inteiro para evitar que a IA tente copiá-los
     prompt_final = db.normalizar_texto(prompt_final)
     
-    # 4. Envia para a IA
-    # O plano gratuito permite 15 requests/min. Para evitar 429 rápido, dormimos 4 segundos
-    time.sleep(4) 
-    
     resposta_ia = classificar_com_retry(prompt_final, log_callback=log_callback)
     
     if resposta_ia.startswith("ERRO_"):
