@@ -123,8 +123,9 @@ def obter_categorias_formatadas(tipo: str) -> tuple[str, dict]:
     
     return categorias_str, categorias_validas
 
-def classificar_com_retry(prompt: str, max_retries: int = 3, log_callback=None) -> str:
-    """Envia o prompt para a API do Gemini com lógica de retry em caso de Rate Limit (429)"""
+def classificar_com_retry(prompt: str, max_retries: int = 5, log_callback=None) -> str:
+    """Envia o prompt para a API do Gemini com lógica de retry em caso de Rate Limit (429) e Jitter"""
+    import random
     client = get_gemini_client()
     
     if not client:
@@ -150,8 +151,9 @@ def classificar_com_retry(prompt: str, max_retries: int = 3, log_callback=None) 
         except Exception as e:
             err_str = str(e)
             if "429" in err_str or "Quota" in err_str or "ResourceExhausted" in err_str:
-                espera = 15 * (2 ** tentativa) # 15s, 30s, 60s
-                msg = f"⏳ Limite atingido. Pausando por {espera} segundos para evitar bloqueio..."
+                espera = (15 * (1.5 ** tentativa)) + random.uniform(1, 5) # Backoff com Jitter
+                espera_arredondada = round(espera, 1)
+                msg = f"⏳ Limite atingido. Pausando por {espera_arredondada} segundos para evitar bloqueio..."
                 logger.warning(msg)
                 if log_callback:
                     log_callback(msg)
@@ -216,3 +218,129 @@ def classificar(tipo: str, texto: str, log_callback=None) -> str:
         return "NI"
         
     return "NI" # Fallback conservador se a IA inventar palavras
+
+def classificar_em_lote(tipo: str, itens: list[tuple[int, str]], log_callback=None) -> dict[int, str]:
+    """
+    Classifica um array de ocorrências em uma única requisição.
+    itens: Lista de tuplas (num_tarefa, texto_da_narrativa)
+    Retorna: Dicionário onde a chave é num_tarefa e o valor é a Classificação (novo_tipo)
+    """
+    import pandas as pd
+    
+    if not GENAI_DISPONIVEL or not GCP_PROJECT_ID:
+        return {id_: "SEM_CHAVE_API" for id_, _ in itens}
+        
+    if not itens:
+        return {}
+        
+    prompt_template = db.obter_prompt_ativo(tipo)
+    if not prompt_template:
+        return {id_: "SEM_PROMPT" for id_, _ in itens}
+        
+    categorias_str, categorias_validas = obter_categorias_formatadas(tipo)
+    if not categorias_str:
+        return {id_: "SEM_CATEGORIAS" for id_, _ in itens}
+        
+    bloco_textos = ""
+    for id_, texto in itens:
+        texto_seg = anonimizar_texto(str(texto)) if pd.notna(texto) else ""
+        if not texto_seg.strip():
+            texto_seg = "VAZIO"
+        bloco_textos += f"[ID_LOTE: {id_}]\nTEXTO: {texto_seg}\n\n"
+        
+    prompt_final = prompt_template.replace("{CATEGORIAS}", categorias_str)
+    prompt_final = prompt_final.replace("{TEXTO}", bloco_textos)
+    prompt_final = db.normalizar_texto(prompt_final)
+    
+    instrucao_lote = """
+ATENÇÃO MÁXIMA AO "id": Você está recebendo ocorrências identificadas por [ID_LOTE: X].
+O valor da chave "id" no seu JSON DEVE SER EXATAMENTE O NÚMERO X QUE VEIO NO TEXTO. 
+NUNCA reinicie a contagem para 1. Se você recebeu [ID_LOTE: 36], você deve devolver "id": 36.
+
+Você DEVE retornar a sua resposta EXCLUSIVAMENTE em formato JSON (um Array de Objetos) com as chaves:
+- "id": O número exato do ID_LOTE avaliado.
+- "classificacao": O nome exato da categoria escolhida (ou "NI" se não classificar).
+
+NÃO RETORNE MAIS NADA ALÉM DO JSON. NÃO PONHA EXPLICAÇÕES EM TEXTO.
+Exemplo de formato (SE VOCÊ RECEBEU OS IDs 36 e 37):
+[
+  {"id": 36, "classificacao": "VIA PÚBLICA"},
+  {"id": 37, "classificacao": "À COMÉRCIO"}
+]
+"""
+    prompt_final += "\n" + instrucao_lote
+    
+    resposta_ia = classificar_com_retry(prompt_final, log_callback=log_callback)
+    
+    if resposta_ia.startswith("ERRO_"):
+        return {id_: resposta_ia for id_, _ in itens}
+        
+    import json
+    import difflib
+    
+    # Extração super-robusta garantindo que pegamos o array JSON ignorando "conversa" da IA
+    start_idx = resposta_ia.find('[')
+    end_idx = resposta_ia.rfind(']')
+    
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        resposta_json_limpa = resposta_ia[start_idx:end_idx+1]
+    else:
+        # Tenta achar um objeto puro caso ele não tenha gerado lista
+        start_obj = resposta_ia.find('{')
+        end_obj = resposta_ia.rfind('}')
+        if start_obj != -1 and end_obj != -1 and end_obj > start_obj:
+            resposta_json_limpa = resposta_ia[start_obj:end_obj+1]
+        else:
+            resposta_json_limpa = resposta_ia
+            
+    retorno = {}
+    try:
+        resultados = json.loads(resposta_json_limpa)
+        if not isinstance(resultados, list):
+            resultados = [resultados] # Fallback se retornou um único objeto
+            
+        for item in resultados:
+            # Pega chaves ignorando se vieram maiúsculas, minúsculas ou com acento
+            chave_id = next((k for k in item.keys() if str(k).lower().strip() == "id"), None)
+            chave_class = next((k for k in item.keys() if str(k).lower().strip() in ["classificacao", "classificação"]), None)
+            
+            val_id = item.get(chave_id, -1) if chave_id else -1
+            id_ = int(val_id)
+            
+            val_class = item.get(chave_class, "NI") if chave_class else "NI"
+            classificacao = str(val_class).replace('"', '').replace("'", "").strip()
+            
+            resposta_limpa_norm = db.normalizar_texto(classificacao).upper()
+            if resposta_limpa_norm in categorias_validas:
+                retorno[id_] = categorias_validas[resposta_limpa_norm]
+            else:
+                matches = difflib.get_close_matches(resposta_limpa_norm, list(categorias_validas.keys()), n=1, cutoff=0.7)
+                if matches:
+                    retorno[id_] = categorias_validas[matches[0]]
+                else:
+                    retorno[id_] = "NI"
+                    
+    except Exception as e:
+        logger.error(f"Erro no parse do JSON do lote: {e}. Resposta: {resposta_ia}")
+        resposta_encurtada = resposta_ia.replace('\n', ' ')
+        return {id_: f"ERRO_JSON_MALFORMADO | RAW: {resposta_encurtada}" for id_, _ in itens}
+        
+    # Proteção Cega Avançada: Se a IA "viciou" e reiniciou a contagem para 1,2,3... mas entregou todos os itens perfeitamente:
+    if len(retorno) > 0 and len(retorno) == len(itens):
+        ids_originais = [i[0] for i in itens]
+        ids_retornados = sorted(list(retorno.keys()))
+        # Se ela reiniciou a contagem em vez de usar os originais (e nós não estamos no Lote 1)
+        if ids_retornados == list(range(1, len(itens) + 1)) and ids_originais[0] != 1:
+            # Remapeia pareando em ordem sequencial
+            novo_retorno = {}
+            for original_id, fake_id in zip(ids_originais, ids_retornados):
+                novo_retorno[original_id] = retorno[fake_id]
+            retorno = novo_retorno
+
+    # Garantir que todos os IDs enviados tenham uma resposta final
+    for id_, _ in itens:
+        if id_ not in retorno:
+            resposta_encurtada = resposta_ia.replace('\n', ' ')
+            retorno[id_] = f"ERRO_IA_OMITIU_ITEM | RAW: {resposta_encurtada}"
+            
+    return retorno

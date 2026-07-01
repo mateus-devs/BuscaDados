@@ -2189,11 +2189,13 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
         uploaded_file = st.file_uploader("Escolha um arquivo XLS ou XLSX para tratamento", type=["xls", "xlsx"])
         
         st.write("")
-        col_btn1, col_btn2, col_btn3 = st.columns([2, 2, 4])
+        col_btn1, col_btn2, col_btn3 = st.columns([3, 3, 3])
         with col_btn1:
             btn_iniciar = st.form_submit_button("▶️ Iniciar Processamento", use_container_width=True)
         with col_btn2:
             btn_cancelar = st.form_submit_button("⏹️ Interromper / Cancelar", use_container_width=True)
+        with col_btn3:
+            btn_limpar = st.form_submit_button("🧹 Limpar Prévia", use_container_width=True)
 
     if btn_iniciar:
         if uploaded_file is None:
@@ -2206,6 +2208,10 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
     if btn_cancelar:
         st.session_state.interromper = True
         st.session_state.processar_clicado = False
+        st.rerun()
+
+    if btn_limpar:
+        reset_processar()
         st.rerun()
             
     # Placeholder para resultados (prévia de dados e botão de download)
@@ -2306,8 +2312,11 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
 
         # Verifica se a primeira coluna é RISP — se for, remove (será substituída por UPM)
         primeira_col = df_upload.columns[0]
-        if str(primeira_col).strip().upper() == "RISP":
+        primeira_col_norm = str(primeira_col).strip().upper()
+        if primeira_col_norm == "RISP":
             df_upload = df_upload.drop(columns=[primeira_col])
+        elif primeira_col_norm == "UPM":
+            df_upload.rename(columns={primeira_col: "UPM"}, inplace=True)
 
         # Encontra colunas Bairro e Municipio de forma flexível (ignorando acentos e case)
         col_bairro = None
@@ -2404,9 +2413,10 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                     df_upload[col_bairro] = novos_bairros
                     df_upload[col_municipio] = novos_municipios
 
-                    # Cria a nova coluna UPM na primeira posição para ser facilmente visível
-                    if "UPM" in df_upload.columns:
-                        df_upload["UPM"] = lista_upms
+                    # Cria a nova coluna UPM na primeira posição (reaproveitando se já existir com o mesmo nome na base)
+                    col_upm_existente = next((c for c in df_upload.columns if str(c).strip().upper() == "UPM"), None)
+                    if col_upm_existente:
+                        df_upload[col_upm_existente] = lista_upms
                     else:
                         df_upload.insert(0, "UPM", lista_upms)
 
@@ -2474,8 +2484,8 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
 
                     if total_tarefas > 0:
                         import concurrent.futures
-                        # 15 workers concorrentes para alta performance aproveitando as cotas do GCP
-                        max_workers = 15
+                        # Reduzido para 3 workers para evitar esgotamento acelerado da cota gratuita/básica da API do Google
+                        max_workers = 3
 
                         status_text = st.empty()
                         progress_bar = st.progress(0)
@@ -2488,55 +2498,80 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                             with st.expander("📊 Log ao vivo das classificações da IA (Progresso Cronológico)", expanded=True):
                                 st.info("⏳ Inicializando chamadas paralelas à Inteligência Artificial...")
 
-                        # Função auxiliar executada de forma assíncrona nas threads filhas
-                        def processar_linha_ia(row_idx, narrativa, valor_atual, num_tarefa):
-                            texto_seguro = ia.anonimizar_texto(narrativa)
-                            msg_log_inicio = f"🔒 Narrativa Anonimizada (Ocorrência {num_tarefa}): {texto_seguro}"
+                        # Organiza as ocorrências em lotes para processamento massivo e performático (Batch Processing)
+                        tarefas_estruturadas = [
+                            (i + 1, r_idx, narr, val_at)
+                            for i, (r_idx, narr, val_at) in enumerate(indices_para_classificar)
+                        ]
+                        
+                        TAMANHO_LOTE = 50
+                        lotes = []
+                        for i in range(0, len(tarefas_estruturadas), TAMANHO_LOTE):
+                            num_lote = (i // TAMANHO_LOTE) + 1
+                            lotes.append((num_lote, tarefas_estruturadas[i:i + TAMANHO_LOTE]))
+
+                        # Função auxiliar executada de forma assíncrona nas threads filhas processando 1 LOTE inteiro
+                        def processar_lote_ia(num_lote, lote_dados):
+                            import time
+                            from datetime import datetime
+                            t0 = time.time()
+                            hora_ini = datetime.now().strftime("%H:%M:%S")
+
+                            itens_ia = [(num_tarefa, narr) for num_tarefa, r_idx, narr, val_at in lote_dados]
 
                             def callback_silencioso(msg):
                                 pass
 
-                            novo_tipo = ia.classificar("Tipo Local", narrativa, log_callback=callback_silencioso)
-                            return row_idx, novo_tipo, valor_atual, msg_log_inicio, num_tarefa
+                            retornos_lote = ia.classificar_em_lote("Tipo Local", itens_ia, log_callback=callback_silencioso)
+                            
+                            t1 = time.time()
+                            hora_fim = datetime.now().strftime("%H:%M:%S")
+                            info_tempo = f"[{hora_ini} -> {hora_fim} | {round(t1 - t0, 1)}s]"
+                            
+                            return num_lote, lote_dados, retornos_lote, info_tempo
+
+                        import time
+                        from datetime import datetime
+                        tempo_inicio_geral = time.time()
+                        hora_inicio_geral = datetime.now().strftime("%H:%M:%S")
 
                         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                            # Submete as tarefas ao pool
+                            # Submete os lotes ao pool
                             futuros = {
-                                executor.submit(processar_linha_ia, r_idx, narr, val_at, i + 1): r_idx
-                                for i, (r_idx, narr, val_at) in enumerate(indices_para_classificar)
+                                executor.submit(processar_lote_ia, n_lote, l_dados): n_lote
+                                for n_lote, l_dados in lotes
                             }
 
                             finalizados = 0
                             for futuro in concurrent.futures.as_completed(futuros):
-                                # Se o usuário clicou para interromper, pára o processamento na thread principal
                                 if st.session_state.get('interromper', False):
                                     st.warning("⚠️ Processamento de Inteligência Artificial interrompido pelo usuário!")
                                     executor.shutdown(wait=False, cancel_futures=True)
                                     break
 
                                 try:
-                                    row_idx, novo_tipo, valor_atual, msg_log_inicio, num_tarefa = futuro.result()
+                                    num_lote, lote_dados, retornos_lote, info_tempo = futuro.result()
 
-                                    msg_final = ""
-                                    if novo_tipo.startswith("ERRO_"):
-                                        erros_ia += 1
-                                        lista_erros_ia.append(f"Ocorrência {num_tarefa}: {novo_tipo}")
-                                        msg_final = f"🔒 Ocorrência {num_tarefa} ({ia.anonimizar_texto(df_upload.at[row_idx, col_narrativa])[:50]}...): Erro na análise ({novo_tipo})"
-                                    elif novo_tipo == "NI":
-                                        linhas_mantidas += 1
-                                        msg_final = f"🔒 Ocorrência {num_tarefa}: Mantido [ {valor_atual if valor_atual else 'VAZIO'} ] -> A IA retornou NI (Não Identificado)"
-                                    else:
-                                        df_upload.at[row_idx, col_tipo2] = novo_tipo
-                                        linhas_classificadas += 1
-                                        msg_final = f"🔒 Ocorrência {num_tarefa}: Reclassificado de [ {valor_atual if valor_atual else 'VAZIO'} ] para -> [ {novo_tipo} ]"
+                                    for num_tarefa, row_idx, narrativa, valor_atual in lote_dados:
+                                        novo_tipo = retornos_lote.get(num_tarefa, "ERRO_IA_OMITIU_ITEM")
 
-                                    # Armazena na posição correspondente para o log final ordenado
-                                    logs_ordenados[num_tarefa - 1] = msg_final
+                                        msg_final = ""
+                                        if novo_tipo.startswith("ERRO_"):
+                                            erros_ia += 1
+                                            lista_erros_ia.append(f"Ocorrência {num_tarefa}: {novo_tipo}")
+                                            msg_final = f"🔒 {info_tempo} Lote {num_lote} - Ocorrência {num_tarefa} ({ia.anonimizar_texto(df_upload.at[row_idx, col_narrativa])[:30]}...): Erro ({novo_tipo})"
+                                        elif novo_tipo == "NI":
+                                            linhas_mantidas += 1
+                                            msg_final = f"🔒 {info_tempo} Lote {num_lote} - Ocorrência {num_tarefa}: Mantido [ {valor_atual if valor_atual else 'VAZIO'} ] -> A IA retornou NI (Não Identificado)"
+                                        else:
+                                            df_upload.at[row_idx, col_tipo2] = novo_tipo
+                                            linhas_classificadas += 1
+                                            msg_final = f"🔒 {info_tempo} Lote {num_lote} - Ocorrência {num_tarefa}: Reclassificado de [ {valor_atual if valor_atual else 'VAZIO'} ] para -> [ {novo_tipo} ]"
 
-                                    # Coloca na lista cronológica de log ao vivo para manter o fluxo coerente sem pular números
-                                    lista_sucesso_ia.append(msg_final)
+                                        logs_ordenados[num_tarefa - 1] = msg_final
+                                        lista_sucesso_ia.append(msg_final)
 
-                                    # Sincroniza em tempo real com o session_state para salvar progresso parcial em caso de cancelamento
+                                    # Sincroniza em tempo real com o session_state para salvar progresso parcial
                                     st.session_state.df_upload_proc = df_upload
                                     st.session_state.linhas_classificadas = linhas_classificadas
                                     st.session_state.linhas_mantidas = linhas_mantidas
@@ -2546,10 +2581,15 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                                     st.session_state.logs_ordenados = logs_ordenados
 
                                 except Exception as e:
-                                    erros_ia += 1
-                                    lista_erros_ia.append(f"Erro ao processar ocorrência: {str(e)}")
+                                    num_lote_erro = futuros[futuro]
+                                    # Se todo o lote explodir (exemplo de request exception)
+                                    for num_tarefa_erro, row_idx_erro, _, _ in [l for n, l in lotes if n == num_lote_erro][0]:
+                                        erros_ia += 1
+                                        lista_erros_ia.append(f"Erro Fatal no Lote {num_lote_erro}: Ocorrência {num_tarefa_erro} ignorada ({str(e)})")
 
-                                finalizados += 1
+                                finalizados += len(lote_dados) if 'lote_dados' in locals() else TAMANHO_LOTE
+                                if finalizados > total_tarefas:
+                                    finalizados = total_tarefas
                                 progress_bar.progress(finalizados / total_tarefas)
                                 status_text.text(f"Processadas {finalizados} de {total_tarefas} ocorrências...")
 
@@ -2566,24 +2606,17 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
 
                         status_text.empty()
                         progress_bar.empty()
+                        
+                        tempo_fim_geral = time.time()
+                        hora_fim_geral = datetime.now().strftime("%H:%M:%S")
+                        
+                        import datetime as dt_lib
+                        duracao_segundos = int(tempo_fim_geral - tempo_inicio_geral)
+                        duracao_formatada = str(dt_lib.timedelta(seconds=duracao_segundos))
+                        
+                        st.session_state['tempo_proc_ia'] = f"⏱️ **Tempo Total de Processamento da IA:** Início às {hora_inicio_geral} | Fim às {hora_fim_geral} | Duração: {duracao_formatada}"
 
-                        # Renderiza o log final completo ordenado e fechado
-                        logs_validos_finais = [msg for msg in logs_ordenados if msg is not None]
-                        if logs_validos_finais:
-                            with log_container.container():
-                                with st.expander("📊 Ver log detalhado das classificações da IA (Ordenado)", expanded=False):
-                                    for msg in logs_validos_finais:
-                                        if "Reclassificado" in msg:
-                                            st.success(msg)
-                                        elif "Erro" in msg or "ERRO" in msg:
-                                            st.error(msg)
-                                        else:
-                                            st.warning(msg)
 
-                        if lista_erros_ia:
-                            with st.expander("🚨 Ver detalhes dos erros da IA"):
-                                for erro_msg in lista_erros_ia:
-                                    st.error(erro_msg)
 
                 elif col_narrativa and col_tipo2:
                     motivos_falta = []
@@ -2594,7 +2627,8 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                     if not db.obter_prompt_ativo("Tipo Local"):
                         motivos_falta.append("Prompt para 'Tipo Local' não cadastrado ou inativo no sistema")
 
-                    st.warning(f"⚠️ Colunas para IA encontradas, mas a classificação foi pulada. Motivos: {', '.join(motivos_falta)}.")
+                    if motivos_falta:
+                        st.warning(f"⚠️ Colunas para IA encontradas, mas a classificação inteligente não está disponível. Motivos: {', '.join(motivos_falta)}.")
 
                 # Concluiu o processamento, desativa o flag para evitar re-execuções reativas indesejadas
                 st.session_state.processar_clicado = False
@@ -2612,6 +2646,27 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
 
                     if col_narrativa and col_tipo2 and ia.GENAI_DISPONIVEL:
                         st.info(f"🧠 **Classificação por Inteligência Artificial:** {linhas_classificadas} Reclassificações | {linhas_mantidas} Mantidos (Sem Alteração) | {erros_ia} Erros")
+                        if 'tempo_proc_ia' in st.session_state:
+                            st.info(st.session_state['tempo_proc_ia'])
+
+                    logs_salvos_ordenados = st.session_state.get('logs_ordenados', [])
+                    erros_salvos_ia = st.session_state.get('lista_erros_ia', [])
+                    
+                    if logs_salvos_ordenados or erros_salvos_ia:
+                        logs_validos = [msg for msg in logs_salvos_ordenados if msg is not None]
+                        if logs_validos:
+                            with st.expander("📊 Ver log detalhado das classificações da IA (Mantido na Sessão)"):
+                                for msg in logs_validos:
+                                    if "Reclassificado" in msg:
+                                        st.success(msg)
+                                    elif "Erro" in msg or "ERRO" in msg:
+                                        st.error(msg)
+                                    else:
+                                        st.warning(msg)
+                        if erros_salvos_ia:
+                            with st.expander("🚨 Ver detalhes dos erros da IA"):
+                                for erro_msg in erros_salvos_ia:
+                                    st.error(erro_msg)
 
                     st.subheader("Prévia dos Dados Processados")
                     # Exibe no Streamlit apenas as primeiras 100 linhas como prévia para performance
@@ -2680,8 +2735,6 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
 
     except Exception as e:
         st.error(f"⚠️ Erro ao ler ou processar o arquivo: {str(e)}")
-    else:
-        st.info("💡 Dica: Prepare uma planilha contendo as colunas 'Bairro' e 'Municipio' para cruzar com o banco de dados do sistema.")
 
 # =====================================================================
 # 4.5. TELA: EXTRAÇÃO DE PDFs (BO)
