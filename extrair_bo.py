@@ -201,15 +201,24 @@ def extrair_pares_chave_valor(secao_text: str, layout_id: int, grupo_id: int) ->
     
     known_keys = itens_df["Palavra_Busca"].tolist()
     
+    # Remove as chaves de metadados especiais do parser normal de texto
+    for special in ["*ARQUIVO*", "*BO_NUMERO*", "*DATA_DO_REGISTRO*", "*HORA_DO_REGISTRO*"]:
+        if special in known_keys:
+            known_keys.remove(special)
+            
     extrair_bruto = False
     if "*TEXTO_BRUTO*" in known_keys:
         extrair_bruto = True
         known_keys.remove("*TEXTO_BRUTO*")
         if not known_keys:
             # Se SÓ tem o TEXTO_BRUTO, não precisa rodar a extração regex
-            mapa = dict(zip(itens_df["Palavra_Busca"], itens_df["Nome_Item_Excel"]))
-            nome_col = normalizar_nome_chave(mapa["*TEXTO_BRUTO*"])
-            return {nome_col: secao_text.strip()}
+            res_bruto = {}
+            for _, row in itens_df.iterrows():
+                if row["Palavra_Busca"] == "*TEXTO_BRUTO*":
+                    if int(row.get("Exportar_Excel", 1)) == 1:
+                        nome_col = normalizar_nome_chave(row["Nome_Item_Excel"])
+                        res_bruto[nome_col] = secao_text.strip()
+            return res_bruto
     
     # Mapeia chaves base (antes do |) para as chaves completas (com contexto)
     base_keys_map = {}
@@ -311,22 +320,21 @@ def extrair_pares_chave_valor(secao_text: str, layout_id: int, grupo_id: int) ->
                 last_empty_key = chave_padrao
                 last_active_key = None
 
-    # Remapeia as palavras de busca (PDF) para o Nome da Coluna (Excel)
-    mapa_chaves = dict(zip(itens_df["Palavra_Busca"], itens_df["Nome_Item_Excel"]))
-    # Dicionário de permissão de exportação
-    mapa_export = dict(zip(itens_df["Palavra_Busca"], itens_df.get("Exportar_Excel", [1]*len(itens_df))))
-    
     resultado = {}
     for pb, valor in pares.items():
-        if pb in mapa_chaves:
-            if int(mapa_export.get(pb, 1)) == 1:
-                nome_col = normalizar_nome_chave(mapa_chaves[pb])
-                resultado[nome_col] = valor
+        # Busca todas as especificações dessa Palavra_Busca no itens_df para suportar duplicados
+        for _, row in itens_df.iterrows():
+            if row["Palavra_Busca"] == pb:
+                if int(row.get("Exportar_Excel", 1)) == 1:
+                    nome_col = normalizar_nome_chave(row["Nome_Item_Excel"])
+                    resultado[nome_col] = valor
             
-    if extrair_bruto and "*TEXTO_BRUTO*" in mapa_chaves:
-        if int(mapa_export.get("*TEXTO_BRUTO*", 1)) == 1:
-            nome_col = normalizar_nome_chave(mapa_chaves["*TEXTO_BRUTO*"])
-            resultado[nome_col] = secao_text.strip()
+    if extrair_bruto:
+        for _, row in itens_df.iterrows():
+            if row["Palavra_Busca"] == "*TEXTO_BRUTO*":
+                if int(row.get("Exportar_Excel", 1)) == 1:
+                    nome_col = normalizar_nome_chave(row["Nome_Item_Excel"])
+                    resultado[nome_col] = secao_text.strip()
             
     return resultado
 
@@ -420,15 +428,173 @@ def remover_cabecalhos_rodapes(texto: str, layout_id: int) -> str:
             cleaned_lines.append(line)
     return '\n'.join(cleaned_lines)
 
+def formatar_faixa_horario(hora_str: str) -> str:
+    """Analise a hora recebida no padrão HH:MM e retorne a faixa de 3 horas correspondente."""
+    if not hora_str:
+        return ""
+    time_match = re.search(r'(\d{1,2}):(\d{2})', hora_str)
+    if not time_match:
+        return ""
+    try:
+        hora = int(time_match.group(1))
+        minuto = int(time_match.group(2))
+        if 0 <= hora < 24 and 0 <= minuto < 60:
+            faixas = [
+                "00:00 AS 02:59",
+                "03:00 AS 05:59",
+                "06:00 AS 08:59",
+                "09:00 AS 11:59",
+                "12:00 AS 14:59",
+                "15:00 AS 17:59",
+                "18:00 AS 20:59",
+                "21:00 AS 23:59"
+            ]
+            return faixas[hora // 3]
+    except Exception:
+        pass
+    return ""
+
+def formatar_periodo_dia(hora_str: str) -> str:
+    """Analise a hora recebida no padrão HH:MM e retorne o nome do turno correspondente (MADRUGADA, MATUTINO, VESPERTINO, NOTURNO)."""
+    if not hora_str:
+        return ""
+    time_match = re.search(r'(\d{1,2}):(\d{2})', hora_str)
+    if not time_match:
+        return ""
+    try:
+        hora = int(time_match.group(1))
+        minuto = int(time_match.group(2))
+        if 0 <= hora < 24 and 0 <= minuto < 60:
+            if 0 <= hora <= 5:
+                return "MADRUGADA"
+            elif 6 <= hora <= 11:
+                return "MATUTINO"
+            elif 12 <= hora <= 17:
+                return "VESPERTINO"
+            elif 18 <= hora <= 23:
+                return "NOTURNO"
+    except Exception:
+        pass
+    return ""
+
+def calcular_formula_data(formula: str, bo_dict: dict) -> str:
+    """Resolve fórmulas como *DIA:DATA_DO_FATO* extraindo porções da data de origem, *FIXO:valor* ou *CONCAT:col1,col2,...*."""
+    # Resolve fórmula de valor fixo do tipo *FIXO:valor*
+    match_fixo = re.match(r'^\*FIXO:(.*)\*$', formula)
+    if match_fixo:
+        return match_fixo.group(1)
+
+    # Resolve fórmula de concatenação do tipo *CONCAT:col1,col2,col3,...*
+    formula_clean = formula.strip()
+    match_concat = re.match(r'^\*?CONCAT:(.*)\*?$', formula_clean, re.IGNORECASE)
+    if match_concat:
+        # Divide por vírgula, limpa os espaços e normaliza as chaves das colunas
+        colunas_origem = [normalizar_nome_chave(c.strip()) for c in match_concat.group(1).split(',')]
+        valores = []
+        for col in colunas_origem:
+            val = bo_dict.get(col)
+            if val and isinstance(val, str) and val.strip():
+                valores.append(val.strip())
+        # Retorna os valores concatenados separados por vírgula e espaço
+        return ", ".join(valores)
+
+    match = re.match(r'^\*(DIA_SEMANA|DIA|MES|ANO|HORA|FAIXA_HORA|PERIODO_HORA):(.+)\*$', formula)
+    if not match:
+        return None
+        
+    operacao = match.group(1)
+    coluna_fonte = normalizar_nome_chave(match.group(2))
+    
+    val_fonte = bo_dict.get(coluna_fonte)
+    if not val_fonte or not isinstance(val_fonte, str):
+        return ""
+        
+    # Extração de hora (HH)
+    if operacao == "HORA":
+        time_match = re.search(r'(\d{1,2}):(\d{2})', val_fonte)
+        if time_match:
+            hora_str = time_match.group(1)
+            if len(hora_str) == 1:
+                hora_str = "0" + hora_str
+            return hora_str
+        return ""
+
+    # Classificação em faixas de 3 horas ou períodos do dia
+    if operacao == "FAIXA_HORA":
+        return formatar_faixa_horario(val_fonte)
+    elif operacao == "PERIODO_HORA":
+        return formatar_periodo_dia(val_fonte)
+        
+    # Busca por formato de data brasileira (DD/MM/YYYY)
+    date_match = re.search(r'(\d{2})/(\d{2})/(\d{4})', val_fonte)
+    if not date_match:
+        return ""
+        
+    dia_str, mes_str, ano_str = date_match.groups()
+    try:
+        dt = datetime(int(ano_str), int(mes_str), int(dia_str))
+    except ValueError:
+        return ""
+        
+    if operacao == "DIA_SEMANA":
+        dias_semana_map = {
+            0: "SEGUNDA-FEIRA",
+            1: "TERÇA-FEIRA",
+            2: "QUARTA-FEIRA",
+            3: "QUINTA-FEIRA",
+            4: "SEXTA-FEIRA",
+            5: "SÁBADO",
+            6: "DOMINGO"
+        }
+        return dias_semana_map[dt.weekday()]
+    elif operacao == "DIA":
+        return dia_str
+    elif operacao == "MES":
+        return mes_str
+    elif operacao == "ANO":
+        return ano_str
+        
+    return ""
+
 def processar_texto_bo(texto: str, filename: str, layout_id: int, db_mappings: dict, lista_municipios: list, bairros_por_mun: dict) -> dict:
     """Processa o texto extraído de um BO (do PDF) dinamicamente por seções chave-valor do Layout."""
     texto = db.corrigir_mojibake(texto)
-    bo_dict = {"ARQUIVO": filename, "BO_NUMERO": extrair_bo_numero(texto)}
     
-    data_reg, hora_reg = extrair_datas_registro(texto)
-    bo_dict["DATA_DO_REGISTRO"] = data_reg
-    bo_dict["HORA_DO_REGISTRO"] = hora_reg
+    # 1. Carrega as chaves de metadados especiais do layout (se configuradas)
+    conn = db.obter_conexao()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT i.Nome_Item_Excel, i.Palavra_Busca, i.Exportar_Excel 
+        FROM layout_itens i 
+        JOIN layout_grupos g ON i.Grupo_ID = g.ID 
+        WHERE g.Layout_ID = %s 
+          AND i.Palavra_Busca IN ('*ARQUIVO*', '*BO_NUMERO*', '*DATA_DO_REGISTRO*', '*HORA_DO_REGISTRO*')
+    """, (layout_id,))
+    special_items = cursor.fetchall()
+    conn.close()
     
+    mapa_especial = {row[1]: (row[0], int(row[2]) == 1) for row in special_items}
+    
+    # Define mapeamentos e chaves de exibição dinâmicas
+    cfg_arquivo = mapa_especial.get("*ARQUIVO*", ("ARQUIVO", True))
+    cfg_bo = mapa_especial.get("*BO_NUMERO*", ("BO_NUMERO", True))
+    cfg_data = mapa_especial.get("*DATA_DO_REGISTRO*", ("DATA_DO_REGISTRO", True))
+    cfg_hora = mapa_especial.get("*HORA_DO_REGISTRO*", ("HORA_DO_REGISTRO", True))
+    
+    bo_dict = {}
+    
+    if cfg_arquivo[1]:
+        bo_dict[normalizar_nome_chave(cfg_arquivo[0])] = filename
+    if cfg_bo[1]:
+        bo_dict[normalizar_nome_chave(cfg_bo[0])] = extrair_bo_numero(texto)
+        
+    if cfg_data[1] or cfg_hora[1]:
+        data_reg, hora_reg = extrair_datas_registro(texto)
+        if cfg_data[1]:
+            bo_dict[normalizar_nome_chave(cfg_data[0])] = data_reg
+        if cfg_hora[1]:
+            bo_dict[normalizar_nome_chave(cfg_hora[0])] = hora_reg
+            
     grupos_df = db.listar_grupos(layout_id)
     if grupos_df.empty:
         return bo_dict
@@ -449,22 +615,52 @@ def processar_texto_bo(texto: str, filename: str, layout_id: int, db_mappings: d
                 itens_df = db.listar_itens(row["ID"])
                 bairro_key = None
                 municipio_key = None
+                bairro_export = True
+                municipio_export = True
                 if not itens_df.empty:
                     for _, item in itens_df.iterrows():
                         if "BAIRRO" in item["Palavra_Busca"].upper() or "BAIRRO" in item["Nome_Item_Excel"].upper():
                             bairro_key = normalizar_nome_chave(item["Nome_Item_Excel"])
+                            bairro_export = int(item.get("Exportar_Excel", 1)) == 1
                         if "MUNIC" in item["Palavra_Busca"].upper() or "MUNIC" in item["Nome_Item_Excel"].upper():
                             municipio_key = normalizar_nome_chave(item["Nome_Item_Excel"])
+                            municipio_export = int(item.get("Exportar_Excel", 1)) == 1
                             
                 if bairro_key and municipio_key:
-                    if bairro_key not in bo_dict or municipio_key not in bo_dict:
+                    precisa_bairro = bairro_export and (bairro_key not in bo_dict)
+                    precisa_municipio = municipio_export and (municipio_key not in bo_dict)
+                    
+                    if precisa_bairro or precisa_municipio:
                         mun_fall, bairro_fall = aplicar_fallback_municipio_bairro(texto, lista_municipios, bairros_por_mun)
-                        if bairro_key not in bo_dict and bairro_fall:
+                        if precisa_bairro and bairro_fall:
                             bo_dict[bairro_key] = bairro_fall.upper()
-                        if municipio_key not in bo_dict and mun_fall:
+                        if precisa_municipio and mun_fall:
                             bo_dict[municipio_key] = db.padronizar_municipio(mun_fall)
         else:
-            bo_dict[key] = normalizar_espacos(texto_secao)
+            if int(row.get("Exportar_Excel", 1)) == 1:
+                bo_dict[key] = normalizar_espacos(texto_secao)
+            
+    # Lógica de fórmulas dinâmicas pós-extração
+    try:
+        conn_frm = db.obter_conexao()
+        cursor_frm = conn_frm.cursor()
+        cursor_frm.execute("""
+            SELECT i.Nome_Item_Excel, i.Palavra_Busca, i.Exportar_Excel 
+            FROM layout_itens i 
+            JOIN layout_grupos g ON i.Grupo_ID = g.ID 
+            WHERE g.Layout_ID = %s 
+              AND i.Palavra_Busca LIKE '*%%:%%*'
+        """, (layout_id,))
+        formula_items = cursor_frm.fetchall()
+        conn_frm.close()
+        
+        for nome_col, formula, exportar_excel in formula_items:
+            if int(exportar_excel) == 1:
+                val_calc = calcular_formula_data(formula, bo_dict)
+                if val_calc is not None:
+                    bo_dict[normalizar_nome_chave(nome_col)] = val_calc
+    except Exception as formula_err:
+        pass
             
     return bo_dict
 
@@ -482,30 +678,94 @@ def processar_pdf(pdf_path: str, layout_id: int, db_mappings: dict, lista_munici
 
 def ordenar_dataframe(df: pd.DataFrame, layout_id: int) -> pd.DataFrame:
     """Ordena as colunas do DataFrame para um formato padronizado conforme o Layout."""
-    ordem_pref = [
-        "ARQUIVO",
-        "BO_NUMERO",
-        "DATA_DO_REGISTRO",
-        "HORA_DO_REGISTRO"
-    ]
+    # Busca todos os itens ativos (normais e fórmulas/especiais)
+    conn = db.obter_conexao()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT i.Nome_Item_Excel, i.Ordem_Excel, i.Palavra_Busca, i.ID
+        FROM layout_itens i 
+        JOIN layout_grupos g ON i.Grupo_ID = g.ID 
+        WHERE g.Layout_ID = %s AND i.Exportar_Excel = 1
+    """, (layout_id,))
+    itens_db = cursor.fetchall()
     
-    grupos_df = db.listar_grupos(layout_id)
-    if not grupos_df.empty:
-        for _, row in grupos_df.iterrows():
-            key = normalizar_nome_chave(row["Nome_Grupo"])
-            if row["Tem_Itens"]:
-                itens_df = db.listar_itens(row["ID"])
-                if not itens_df.empty:
-                    for _, item in itens_df.iterrows():
-                        if int(item.get("Exportar_Excel", 1)) == 1:
-                            col_name = normalizar_nome_chave(item["Nome_Item_Excel"])
-                            ordem_pref.append(col_name)
-            else:
-                ordem_pref.append(key)
-                
+    # Busca todos os grupos ativos sem sub-itens (colunas diretas)
+    cursor.execute("""
+        SELECT Nome_Grupo, Ordem_Excel, '*TEXTO_BRUTO*', ID
+        FROM layout_grupos
+        WHERE Layout_ID = %s AND Tem_Itens = 0 AND Exportar_Excel = 1
+    """, (layout_id,))
+    grupos_db = cursor.fetchall()
+    
+    # Busca se existem itens de metadados especiais mapeados no banco (ativos ou não) para evitar fallback indevido
+    cursor.execute("""
+        SELECT i.Palavra_Busca 
+        FROM layout_itens i 
+        JOIN layout_grupos g ON i.Grupo_ID = g.ID 
+        WHERE g.Layout_ID = %s 
+          AND i.Palavra_Busca IN ('*ARQUIVO*', '*BO_NUMERO*', '*DATA_DO_REGISTRO*', '*HORA_DO_REGISTRO*')
+    """, (layout_id,))
+    especiais_mapeados = [r[0] for r in cursor.fetchall()]
+    conn.close()
+    
+    # Junta ambos em uma única lista
+    colunas_candidatas = []
+    for nome, ordem_e, palavra, iid in itens_db:
+        colunas_candidatas.append({
+            "nome": normalizar_nome_chave(nome),
+            "nome_original": nome,
+            "ordem_excel": ordem_e,
+            "palavra": palavra,
+            "id": iid
+        })
+    for nome, ordem_e, palavra, iid in grupos_db:
+        colunas_candidatas.append({
+            "nome": normalizar_nome_chave(nome),
+            "nome_original": nome,
+            "ordem_excel": ordem_e,
+            "palavra": palavra,
+            "id": iid
+        })
+        
+    # Ordena pelo Ordem_Excel (crescente) e pelo ID (estável)
+    colunas_candidatas.sort(key=lambda x: (x["ordem_excel"], x["id"]))
+    
+    mapeamento_exibicao = {}
+    for c in colunas_candidatas:
+        mapeamento_exibicao[c["nome"]] = c["nome_original"]
+    
+    ordem_pref = []
+    # Adiciona metadados estáticos antigos apenas como fallback se não estiverem mapeados de forma alguma no banco (ativos ou inativos)
+    if "*ARQUIVO*" not in especiais_mapeados:
+        ordem_pref.append("ARQUIVO")
+        mapeamento_exibicao["ARQUIVO"] = "ARQUIVO"
+    if "*BO_NUMERO*" not in especiais_mapeados:
+        ordem_pref.append("BO_NUMERO")
+        mapeamento_exibicao["BO_NUMERO"] = "BO_NUMERO"
+    if "*DATA_DO_REGISTRO*" not in especiais_mapeados:
+        ordem_pref.append("DATA_DO_REGISTRO")
+        mapeamento_exibicao["DATA_DO_REGISTRO"] = "DATA_DO_REGISTRO"
+    if "*HORA_DO_REGISTRO*" not in especiais_mapeados:
+        ordem_pref.append("HORA_DO_REGISTRO")
+        mapeamento_exibicao["HORA_DO_REGISTRO"] = "HORA_DO_REGISTRO"
+        
+    for c in colunas_candidatas:
+        nome_norm = c["nome"]
+        if nome_norm not in ordem_pref:
+            ordem_pref.append(nome_norm)
+            
+    # Cria uma cópia do DataFrame para evitar SettingWithCopyWarning
+    df = df.copy()
+    
+    # Cria no DataFrame as colunas parametrizadas para exportação que estão ausentes (sem informação)
+    for col in ordem_pref:
+        if col not in df.columns:
+            df[col] = ""
+            
     colunas_existentes = [c for c in ordem_pref if c in df.columns]
     colunas_extras = [c for c in df.columns if c not in colunas_existentes]
-    return df[colunas_existentes + colunas_extras]
+    df_ordenado = df[colunas_existentes + colunas_extras]
+    return df_ordenado.rename(columns=mapeamento_exibicao)
 
 def processar_pasta_bo(pasta_origem: str, arquivo_excel: str):
     """Varre uma pasta contendo PDFs, processa cada BO e salva em planilha Excel."""

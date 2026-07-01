@@ -3,7 +3,10 @@ import pandas as pd
 import banco as db
 import psycopg2
 from datetime import datetime
-
+import importlib
+importlib.reload(db)
+import ia_classificador as ia
+importlib.reload(ia)
 # Configuração global da página do Streamlit
 st.set_page_config(page_title="BuscaDados", layout="wide", initial_sidebar_state="expanded")
 
@@ -250,7 +253,7 @@ is_admin = user.get("is_admin", False)
 st.sidebar.title("🤖 BuscaDados")
 st.sidebar.subheader("Menu Principal")
 
-opcoes_menu = ["🏙️ Manutenção de Municípios", "🏘️ Manutenção de Bairros", "🚔 Manutenção de UPMs", "🌐 Manutenção de Serviços", "📄 Manutenção de Layouts", "⚡ Tratar Planilha (Injetar UPM)", "🤖 Robô de Extração (BO)", "⚙️ Configurações"]
+opcoes_menu = ["🏙️ Manutenção de Municípios", "🏘️ Manutenção de Bairros", "🚔 Manutenção de UPMs", "🌐 Manutenção de Serviços", "📄 Manutenção de Layouts", "📍 Manutenção de Tipo Local", "📝 Manutenção de Prompts", "⚡ Tratar Planilha (Injetar UPM)", "🤖 Robô de Extração (BO)", "⚙️ Configurações"]
 
 # --- CONTROLE DE ACESSO BASEADO EM PAPEL (RBAC) ---
 # Se o usuário NÃO for Administrador (ou seja, é um Operador), ele sofre uma restrição.
@@ -290,8 +293,11 @@ st.sidebar.markdown("<hr style='margin: 15px 0px 15px 0px;'>", unsafe_allow_html
 st.sidebar.subheader("🔌 Serviços Ativos")
 df_servicos_sidebar = db.listar_dados("servicos")
 if not df_servicos_sidebar.empty:
-    # Filtra apenas os serviços ativos para exibição no menu lateral
+    # Filtra apenas os serviços ativos e que estão marcados para exibição no menu lateral
     df_servicos_sidebar = df_servicos_sidebar[df_servicos_sidebar.get("Status", "Ativo") == "Ativo"]
+    if "Exibir_No_Menu" in df_servicos_sidebar.columns:
+        df_servicos_sidebar = df_servicos_sidebar[df_servicos_sidebar["Exibir_No_Menu"] == "Sim"]
+    
     if not df_servicos_sidebar.empty:
         for idx, row in df_servicos_sidebar.iterrows():
             id_servico = row["ID"]
@@ -340,7 +346,7 @@ if menu == "🏙️ Manutenção de Municípios":
         if st.button("➕ Cadastrar Novo Município", width="stretch"):
             st.session_state.sub_tela_mun = "formulario"
             st.session_state.modo_form_mun = "cadastro"
-            st.session_state.dados_sel_mun = {"ID": None, "Municipio": "", "Estado": "MT - Mato Grosso"}
+            st.session_state.dados_sel_mun = {"ID": None, "Municipio": "", "Estado": "MT - Mato Grosso", "id_municipio_srop": ""}
             st.rerun()
             
         st.write("")
@@ -371,34 +377,54 @@ if menu == "🏙️ Manutenção de Municípios":
             st.info("Nenhum município cadastrado no banco de dados ainda.")
         else:
             st.subheader(f"Municípios Cadastrados (Página {st.session_state.pagina_mun} de {total_paginas_mun})")
-            col_id, col_nome, col_est, col_acoes = st.columns([0.8, 3, 3, 3.2])
+            col_id, col_nome, col_est, col_srop, col_acoes = st.columns([0.8, 3, 2, 2, 3.2])
             with col_id: st.write("**ID**")
             with col_nome: st.write("**Município**")
             with col_est: st.write("**Estado**")
+            with col_srop: st.write("**ID SROP**")
             with col_acoes: st.write("**Ações Disponíveis**")
             st.markdown("<hr style='margin: 0px 0px 10px 0px; border-color: #f0f2f6;'>", unsafe_allow_html=True)
             
             for idx, row in df_mun_exibicao.iterrows():
                 id_atual = row["ID"]
                 mun_atual = row["Municipio"]
-                est_atual = row["Estado"]
+                est_bruto = str(row["Estado"]).strip()
+                mapa_estados_aux = {
+                    "AC": "Acre", "AL": "Alagoas", "AP": "Amapá", "AM": "Amazonas",
+                    "BA": "Bahia", "CE": "Ceará", "DF": "Distrito Federal", "ES": "Espírito Santo",
+                    "GO": "Goiás", "MA": "Maranhão", "MT": "Mato Grosso", "MS": "Mato Grosso do Sul",
+                    "MG": "Minas Gerais", "PA": "Pará", "PB": "Paraíba", "PR": "Paraná",
+                    "PE": "Pernambuco", "PI": "Piauí", "RJ": "Rio de Janeiro", "RN": "Rio Grande do Norte",
+                    "RS": "Rio Grande do Sul", "RO": "Rondônia", "RR": "Roraima", "SC": "Santa Catarina",
+                    "SP": "São Paulo", "SE": "Sergipe", "TO": "Tocantins"
+                }
+                if len(est_bruto) == 2:
+                    nome_uf = mapa_estados_aux.get(est_bruto.upper(), "")
+                    est_atual = f"{est_bruto.upper()} - {nome_uf}" if nome_uf else est_bruto
+                else:
+                    est_atual = est_bruto
+                    
+                srop_atual = row.get("id_municipio_srop", "")
+                if pd.isna(srop_atual) or srop_atual is None:
+                    srop_atual = ""
                 
-                c_id, c_nome, c_est, c_vis, c_edt, c_exc = st.columns([0.8, 3, 3, 1, 1, 1.2])
+                c_id, c_nome, c_est, c_srop, c_vis, c_edt, c_exc = st.columns([0.8, 3, 2, 2, 0.9, 0.9, 1.4])
                 c_id.write(f"`{id_atual}`")
                 c_nome.write(mun_atual)
                 c_est.write(est_atual)
+                c_srop.write(str(srop_atual) if srop_atual else "-")
                 
                 if c_vis.button("👁️ Ver", key=f"vis_mun_{id_atual}", width="stretch"):
                     st.session_state.sub_tela_mun = "formulario"; st.session_state.modo_form_mun = "visualizar"
-                    st.session_state.dados_sel_mun = {"ID": id_atual, "Municipio": mun_atual, "Estado": est_atual}; st.rerun()
+                    st.session_state.dados_sel_mun = {"ID": id_atual, "Municipio": mun_atual, "Estado": est_atual, "id_municipio_srop": srop_atual}; st.rerun()
                     
                 if c_edt.button("✏️ Editar", key=f"edt_mun_{id_atual}", width="stretch"):
                     st.session_state.sub_tela_mun = "formulario"; st.session_state.modo_form_mun = "editar"
-                    st.session_state.dados_sel_mun = {"ID": id_atual, "Municipio": mun_atual, "Estado": est_atual}; st.rerun()
+                    st.session_state.dados_sel_mun = {"ID": id_atual, "Municipio": mun_atual, "Estado": est_atual, "id_municipio_srop": srop_atual}; st.rerun()
                     
                 if c_exc.button("🗑️ Excluir", key=f"exc_mun_{id_atual}", width="stretch", type="primary"):
                     st.session_state.sub_tela_mun = "formulario"; st.session_state.modo_form_mun = "excluir"
-                    st.session_state.dados_sel_mun = {"ID": id_atual, "Municipio": mun_atual, "Estado": est_atual}; st.rerun()
+                    st.session_state.dados_sel_mun = {"ID": id_atual, "Municipio": mun_atual, "Estado": est_atual, "id_municipio_srop": srop_atual}; st.rerun()
             
             st.write("")
             col_ant, col_e1, col_pag, col_e2, col_prox = st.columns([1, 1, 0.8, 1, 1])
@@ -434,13 +460,14 @@ if menu == "🏙️ Manutenção de Municípios":
 
         novo_mun = st.text_input("Nome do Município", value=dados["Municipio"], disabled=campos_bloqueados, key="input_mun_dinamico").strip()
         estado_mun = st.selectbox("Estado", ["MT - Mato Grosso"], index=0, disabled=campos_bloqueados, key="select_est_dinamico")
+        id_municipio_srop_val = st.text_input("Código ID Município SROP", value=str(dados.get("id_municipio_srop", "")) if dados.get("id_municipio_srop") is not None else "", disabled=campos_bloqueados, key="input_mun_srop_id").strip()
         
         st.write("")
         if modo == "cadastro":
             c_salvar, c_cancelar = st.columns(2)
             if c_salvar.button("💾 Salvar no Banco", key="btn_salvar_mun", width="stretch"):
                 if novo_mun:
-                    if db.salvar_registro("municipios", {"Municipio": novo_mun, "Estado": estado_mun}):
+                    if db.salvar_registro("municipios", {"Municipio": novo_mun, "Estado": estado_mun, "id_municipio_srop": id_municipio_srop_val if id_municipio_srop_val else None}):
                         st.session_state.sub_tela_mun = "listar"; st.session_state.mensagem_sucesso = f"🎉 Município '{novo_mun}' cadastrado com sucesso!"; st.rerun()
                     else: st.error(f"⚠️ Erro: O município '{novo_mun}' já existe!")
                 else: st.error("Por favor, digite o nome do município.")
@@ -456,7 +483,7 @@ if menu == "🏙️ Manutenção de Municípios":
             if c_atualizar.button("💾 Salvar Alterações", key="btn_update_mun", width="stretch"):
                 if novo_mun:
                     conn = db.obter_conexao(); cursor = conn.cursor()
-                    cursor.execute("UPDATE municipios SET Municipio = %s, Estado = %s WHERE ID = %s", (novo_mun, estado_mun, dados["ID"]))
+                    cursor.execute("UPDATE municipios SET Municipio = %s, Estado = %s, id_municipio_srop = %s WHERE ID = %s", (novo_mun, estado_mun, id_municipio_srop_val if id_municipio_srop_val else None, dados["ID"]))
                     conn.commit(); conn.close()
                     st.session_state.sub_tela_mun = "listar"; st.session_state.mensagem_sucesso = "✏️ Município alterado com sucesso!"; st.rerun()
                 else: st.error("O nome do município não pode ficar em branco.")
@@ -563,22 +590,33 @@ elif menu == "🏘️ Manutenção de Bairros":
                 st.warning("Nenhum bairro encontrado para os filtros selecionados.")
             else:
                 st.subheader(f"Bairros Cadastrados (Página {st.session_state.pagina_bai} de {total_paginas_bai})")
-                col_id, col_nome, col_mun, col_acoes = st.columns([0.8, 2.5, 2.5, 4.2])
+                col_id, col_nome, col_mun, col_est, col_acoes = st.columns([0.8, 2.5, 2.5, 2.0, 4.2])
                 with col_id: st.write("**ID**")
                 with col_nome: st.write("**Bairro**")
                 with col_mun: st.write("**Município Vinculado**")
+                with col_est: st.write("**Estado**")
                 with col_acoes: st.write("**Ações Disponíveis**")
                 st.markdown("<hr style='margin: 0px 0px 10px 0px; border-color: #f0f2f6;'>", unsafe_allow_html=True)
+                
+                # Obtém o mapeamento de Município -> Estado para exibir na listagem
+                df_mun_all = db.listar_dados("municipios")
+                mapa_mun_estado = {}
+                if not df_mun_all.empty:
+                    mapa_mun_estado = {row["Municipio"].upper(): row["Estado"] for _, row in df_mun_all.iterrows()}
                 
                 for idx, row in df_bai_exibicao.iterrows():
                     id_atual = row["ID"]
                     bai_atual = row["Bairro"]
                     mun_atual = row["Municipio"]
                     
-                    c_id, c_nome, c_mun, c_vis, c_edt, c_alt, c_exc = st.columns([0.8, 2.5, 2.5, 0.8, 1.0, 1.4, 1.0])
+                    # Obtém o estado correspondente de forma individual para cada linha
+                    est_atual = mapa_mun_estado.get(mun_atual.upper(), "-")
+                    
+                    c_id, c_nome, c_mun, c_est, c_vis, c_edt, c_alt, c_exc = st.columns([0.8, 2.5, 2.5, 2.0, 0.8, 1.0, 1.4, 1.0])
                     c_id.write(f"`{id_atual}`")
                     c_nome.write(bai_atual)
                     c_mun.text(mun_atual)
+                    c_est.write(est_atual)
                     
                     if c_vis.button("👁️ Ver", key=f"vis_bai_{id_atual}", width="stretch"):
                         st.session_state.sub_tela_bai = "formulario"; st.session_state.modo_form_bai = "visualizar"
@@ -1103,7 +1141,7 @@ elif menu == "🌐 Manutenção de Serviços":
             st.session_state.modo_form_ser = "cadastro"
             st.session_state.dados_sel_ser = {
                 "ID": None, "Nome": "", "UrlLogin": "", "UrlConsulta": "", "UrlPdf": "", "Login": "", "Senha": "",
-                "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo", "Layout_ID": 1
+                "DuplaAutenticacao": "Não", "Tipo": "SROP", "Status": "Ativo", "Layout_ID": 1, "Exibir_No_Menu": "Sim"
             }
             st.rerun()
             
@@ -1148,6 +1186,7 @@ elif menu == "🌐 Manutenção de Serviços":
                 status_servico = row.get("Status", "Ativo")
                 tempo_expiracao = row.get("Tempo_Expiracao_Horas", 4)
                 layout_id_db = row.get("Layout_ID", 1)
+                exibir_no_menu = row.get("Exibir_No_Menu", "Sim")
                 
                 c_id, c_nome, c_status, c_vis, c_edt, c_exc = st.columns([0.8, 3, 2, 1.2, 1.2, 1.8])
                 c_id.write(f"`{id_atual}`")
@@ -1169,7 +1208,8 @@ elif menu == "🌐 Manutenção de Serviços":
                         "DuplaAutenticacao": dupla_autenticacao,
                         "Tipo": tipo_servico, "Status": status_servico,
                         "Tempo_Expiracao_Horas": tempo_expiracao,
-                        "Layout_ID": layout_id_db
+                        "Layout_ID": layout_id_db,
+                        "Exibir_No_Menu": exibir_no_menu
                     }
                     st.rerun()
                     
@@ -1183,7 +1223,8 @@ elif menu == "🌐 Manutenção de Serviços":
                         "DuplaAutenticacao": dupla_autenticacao,
                         "Tipo": tipo_servico, "Status": status_servico,
                         "Tempo_Expiracao_Horas": tempo_expiracao,
-                        "Layout_ID": layout_id_db
+                        "Layout_ID": layout_id_db,
+                        "Exibir_No_Menu": exibir_no_menu
                     }
                     st.rerun()
                     
@@ -1197,7 +1238,8 @@ elif menu == "🌐 Manutenção de Serviços":
                         "DuplaAutenticacao": dupla_autenticacao,
                         "Tipo": tipo_servico, "Status": status_servico,
                         "Tempo_Expiracao_Horas": tempo_expiracao,
-                        "Layout_ID": layout_id_db
+                        "Layout_ID": layout_id_db,
+                        "Exibir_No_Menu": exibir_no_menu
                     }
                     st.rerun()
                     
@@ -1235,54 +1277,96 @@ elif menu == "🌐 Manutenção de Serviços":
             st.error(f"Atenção: Você está prestes a deletar o serviço '{dados['Nome']}'. Esta ação não pode ser desfeita.")
 
         novo_nome = st.text_input("Nome do Serviço", value=dados["Nome"], disabled=campos_bloqueados, key="input_ser_nome").strip()
-        nova_url_login = st.text_input("Endereço da Tela de Login", value=dados["UrlLogin"], disabled=campos_bloqueados, key="input_ser_urllogin").strip()
-        nova_url_consulta = st.text_input("Endereço da Tela de Consulta", value=dados["UrlConsulta"], disabled=campos_bloqueados, key="input_ser_urlconsulta").strip()
-        nova_url_pdf = st.text_input("Endereço de Extração do PDF", value=dados["UrlPdf"], disabled=campos_bloqueados, key="input_ser_urlpdf").strip()
-        novo_login = st.text_input("Login", value=dados["Login"], disabled=campos_bloqueados, key="input_ser_login").strip()
-        nova_senha = st.text_input("Senha", value=dados["Senha"], type="password", disabled=campos_bloqueados, key="input_ser_senha").strip()
         
-        lista_dupla = ["Não", "Sim"]
-        idx_dupla = lista_dupla.index(dados["DuplaAutenticacao"]) if dados.get("DuplaAutenticacao") in lista_dupla else 0
-        nova_dupla = st.selectbox("Dupla Autenticação", lista_dupla, index=idx_dupla, disabled=campos_bloqueados, key="input_ser_dupla")
-        
-        st.write("")
-        novo_tempo_expiracao = st.number_input("Tempo Máximo de Sessão (Horas)", min_value=1, max_value=24, value=dados.get("Tempo_Expiracao_Horas", 4), disabled=campos_bloqueados, key="input_ser_tempo")
-        
-        st.write("")
-        df_layouts = db.listar_layouts()
-        lista_layouts = df_layouts["Nome_Layout"].tolist() if not df_layouts.empty else ["Layout Genérico Padrão"]
-        id_atual_layout = dados.get("Layout_ID", 1)
-        nome_atual_layout = df_layouts[df_layouts["ID"] == id_atual_layout]["Nome_Layout"].values[0] if not df_layouts.empty and id_atual_layout in df_layouts["ID"].values else lista_layouts[0]
-        idx_layout = lista_layouts.index(nome_atual_layout) if nome_atual_layout in lista_layouts else 0
-        
-        novo_layout_nome = st.selectbox("Layout de Extração (OCR)", lista_layouts, index=idx_layout, disabled=campos_bloqueados, key="input_ser_layout")
-        novo_layout_id = int(df_layouts[df_layouts["Nome_Layout"] == novo_layout_nome]["ID"].values[0]) if not df_layouts.empty else 1
-        
-        lista_tipo = ["SROP"]
-        idx_tipo = lista_tipo.index(dados["Tipo"]) if dados.get("Tipo") in lista_tipo else 0
+        lista_tipo = ["SROP", "Gemini"]
+        idx_tipo = lista_tipo.index(dados.get("Tipo", "SROP")) if dados.get("Tipo", "SROP") in lista_tipo else 0
         novo_tipo = st.selectbox("Tipo", lista_tipo, index=idx_tipo, disabled=campos_bloqueados, key="input_ser_tipo")
         
         lista_status = ["Ativo", "Inativo"]
-        idx_status = lista_status.index(dados["Status"]) if dados.get("Status") in lista_status else 0
+        idx_status = lista_status.index(dados.get("Status", "Ativo")) if dados.get("Status", "Ativo") in lista_status else 0
         novo_status = st.selectbox("Situação", lista_status, index=idx_status, disabled=campos_bloqueados, key="input_ser_status")
+        
+        lista_exibir = ["Sim", "Não"]
+        idx_exibir = lista_exibir.index(dados.get("Exibir_No_Menu", "Sim")) if dados.get("Exibir_No_Menu", "Sim") in lista_exibir else 0
+        novo_exibir_menu = st.selectbox("Exibir no Menu", lista_exibir, index=idx_exibir, disabled=campos_bloqueados, key="input_ser_exibir")
+        
+        if novo_tipo == "SROP":
+            nova_url_login = st.text_input("Endereço da Tela de Login", value=dados["UrlLogin"], disabled=campos_bloqueados, key="input_ser_urllogin").strip()
+            nova_url_consulta = st.text_input("Endereço da Tela de Consulta", value=dados["UrlConsulta"], disabled=campos_bloqueados, key="input_ser_urlconsulta").strip()
+            nova_url_pdf = st.text_input("Endereço de Extração do PDF", value=dados["UrlPdf"], disabled=campos_bloqueados, key="input_ser_urlpdf").strip()
+            novo_login = st.text_input("Login", value=dados["Login"], disabled=campos_bloqueados, key="input_ser_login").strip()
+            nova_senha = st.text_input("Senha", value=dados["Senha"], type="password", disabled=campos_bloqueados, key="input_ser_senha").strip()
+            
+            lista_dupla = ["Não", "Sim"]
+            idx_dupla = lista_dupla.index(dados.get("DuplaAutenticacao", "Não")) if dados.get("DuplaAutenticacao", "Não") in lista_dupla else 0
+            nova_dupla = st.selectbox("Dupla Autenticação", lista_dupla, index=idx_dupla, disabled=campos_bloqueados, key="input_ser_dupla")
+            
+            st.write("")
+            novo_tempo_expiracao = st.number_input("Tempo Máximo de Sessão (Horas)", min_value=1, max_value=24, value=dados.get("Tempo_Expiracao_Horas", 4), disabled=campos_bloqueados, key="input_ser_tempo")
+            
+            st.write("")
+            df_layouts = db.listar_layouts()
+            lista_layouts = df_layouts["Nome_Layout"].tolist() if not df_layouts.empty else ["Layout Genérico Padrão"]
+            id_atual_layout = dados.get("Layout_ID", 1)
+            nome_atual_layout = df_layouts[df_layouts["ID"] == id_atual_layout]["Nome_Layout"].values[0] if not df_layouts.empty and id_atual_layout in df_layouts["ID"].values else lista_layouts[0]
+            idx_layout = lista_layouts.index(nome_atual_layout) if nome_atual_layout in lista_layouts else 0
+            
+            novo_layout_nome = st.selectbox("Layout de Extração (OCR)", lista_layouts, index=idx_layout, disabled=campos_bloqueados, key="input_ser_layout")
+            novo_layout_id = int(df_layouts[df_layouts["Nome_Layout"] == novo_layout_nome]["ID"].values[0]) if not df_layouts.empty else 1
+            
+        elif novo_tipo == "Gemini":
+            if modo in ["visualizar", "excluir"] and dados.get("Senha"):
+                valor_exibicao = "*** CREDENCIAIS SALVAS E CRIPTOGRAFADAS NO BANCO ***"
+            elif modo == "editar" and dados.get("Senha"):
+                valor_exibicao = "*** CREDENCIAIS SALVAS E CRIPTOGRAFADAS NO BANCO ***\n\n(Para manter as credenciais atuais, não altere este campo.\nPara substituí-las, apague todo este texto e cole o novo arquivo JSON aqui.)"
+            else:
+                valor_exibicao = dados.get("Senha", "")
+                
+            nova_senha_input = st.text_area("JSON (Credenciais)", value=valor_exibicao, disabled=campos_bloqueados, key="input_ser_json", height=200).strip()
+            
+            # Se o usuário não alterou o texto de exibição, mantemos a senha original (já descriptografada na memória)
+            if "*** CREDENCIAIS SALVAS E CRIPTOGRAFADAS NO BANCO ***" in nova_senha_input:
+                nova_senha = dados.get("Senha", "")
+            else:
+                nova_senha = nova_senha_input
+                
+            nova_url_login = "-"
+            nova_url_consulta = "-"
+            nova_url_pdf = "-"
+            novo_login = "-"
+            nova_dupla = "Não"
+            novo_tempo_expiracao = 4
+            novo_layout_id = 1
         
         st.write("")
         if modo == "cadastro":
             c_salvar, c_cancelar = st.columns(2)
             if c_salvar.button("💾 Salvar no Banco", key="btn_salvar_ser", width="stretch"):
-                if novo_nome and nova_url_login and nova_url_consulta and nova_url_pdf:
-                    sucesso = db.salvar_registro("servicos", {
-                        "Nome": novo_nome, "UrlLogin": nova_url_login, "UrlConsulta": nova_url_consulta,
-                        "UrlPdf": nova_url_pdf, "Login": novo_login, "Senha": nova_senha,
-                        "DuplaAutenticacao": nova_dupla, "Tipo": novo_tipo, "Status": novo_status,
-                        "Tempo_Expiracao_Horas": novo_tempo_expiracao, "Layout_ID": novo_layout_id
-                    })
-                    if sucesso:
-                        st.session_state.sub_tela_ser = "listar"
-                        st.session_state.mensagem_sucesso = f"🎉 Serviço '{novo_nome}' cadastrado com sucesso!"
-                        st.rerun()
-                    else: st.error(f"⚠️ Erro: O serviço '{novo_nome}' já existe!")
-                else: st.error("Por favor, preencha todos os campos obrigatórios do formulário (Nome, Login URL, Consulta URL e PDF URL).")
+                valido = bool(novo_nome and nova_url_login and nova_url_consulta and nova_url_pdf) if novo_tipo == "SROP" else bool(novo_nome and nova_senha)
+                if not valido:
+                    st.error("Por favor, preencha todos os campos obrigatórios do formulário.")
+                else:
+                    liberado = True
+                    if novo_tipo == "SROP":
+                        tags_obrigatorias = ["{DataInicialRegistro}", "{DataFinalRegistro}", "{idMunicipio}", "{size}"]
+                        tags_faltantes = [t for t in tags_obrigatorias if t not in nova_url_consulta]
+                        if tags_faltantes:
+                            st.error(f"⚠️ Erro: O Endereço da Tela de Consulta deve conter todas as tags obrigatórias do SROP. Tags ausentes: {', '.join(tags_faltantes)}")
+                            liberado = False
+                    
+                    if liberado:
+                        sucesso = db.salvar_registro("servicos", {
+                            "Nome": novo_nome, "UrlLogin": nova_url_login, "UrlConsulta": nova_url_consulta,
+                            "UrlPdf": nova_url_pdf, "Login": novo_login, "Senha": nova_senha,
+                            "DuplaAutenticacao": nova_dupla, "Tipo": novo_tipo, "Status": novo_status,
+                            "Tempo_Expiracao_Horas": novo_tempo_expiracao, "Layout_ID": novo_layout_id,
+                            "Exibir_No_Menu": novo_exibir_menu
+                        })
+                        if sucesso:
+                            st.session_state.sub_tela_ser = "listar"
+                            st.session_state.mensagem_sucesso = f"🎉 Serviço '{novo_nome}' cadastrado com sucesso!"
+                            st.rerun()
+                        else: st.error(f"⚠️ Erro: O serviço '{novo_nome}' já existe!")
             if c_cancelar.button("❌ Cancelar e Voltar", key="btn_cancelar_cad_ser", width="stretch"):
                 st.session_state.sub_tela_ser = "listar"; st.rerun()
                     
@@ -1293,20 +1377,31 @@ elif menu == "🌐 Manutenção de Serviços":
         elif modo == "editar":
             c_atualizar, c_cancelar = st.columns(2)
             if c_atualizar.button("💾 Salvar Alterações", key="btn_update_ser", width="stretch"):
-                if novo_nome and nova_url_login and nova_url_consulta and nova_url_pdf:
-                    conn = db.obter_conexao()
-                    cursor = conn.cursor()
-                    senha_criptografada = db.criptografar_senha(nova_senha)
-                    cursor.execute(
-                        "UPDATE servicos SET Nome = %s, UrlLogin = %s, UrlConsulta = %s, UrlPdf = %s, Login = %s, Senha = %s, DuplaAutenticacao = %s, Tipo = %s, Status = %s, Tempo_Expiracao_Horas = %s, Layout_ID = %s WHERE ID = %s",
-                        (novo_nome, nova_url_login, nova_url_consulta, nova_url_pdf, novo_login, senha_criptografada, nova_dupla, novo_tipo, novo_status, novo_tempo_expiracao, novo_layout_id, dados["ID"])
-                    )
-                    conn.commit()
-                    conn.close()
-                    st.session_state.sub_tela_ser = "listar"
-                    st.session_state.mensagem_sucesso = "✏️ Serviço alterado com sucesso!"
-                    st.rerun()
-                else: st.error("Por favor, preencha todos os campos obrigatórios do formulário (Nome, Login URL, Consulta URL e PDF URL).")
+                valido = bool(novo_nome and nova_url_login and nova_url_consulta and nova_url_pdf) if novo_tipo == "SROP" else bool(novo_nome and nova_senha)
+                if not valido:
+                    st.error("Por favor, preencha todos os campos obrigatórios do formulário.")
+                else:
+                    liberado = True
+                    if novo_tipo == "SROP":
+                        tags_obrigatorias = ["{DataInicialRegistro}", "{DataFinalRegistro}", "{idMunicipio}", "{size}"]
+                        tags_faltantes = [t for t in tags_obrigatorias if t not in nova_url_consulta]
+                        if tags_faltantes:
+                            st.error(f"⚠️ Erro: O Endereço da Tela de Consulta deve conter todas as tags obrigatórias do SROP. Tags ausentes: {', '.join(tags_faltantes)}")
+                            liberado = False
+                    
+                    if liberado:
+                        conn = db.obter_conexao()
+                        cursor = conn.cursor()
+                        senha_criptografada = db.criptografar_senha(nova_senha)
+                        cursor.execute(
+                            "UPDATE servicos SET Nome = %s, UrlLogin = %s, UrlConsulta = %s, UrlPdf = %s, Login = %s, Senha = %s, DuplaAutenticacao = %s, Tipo = %s, Status = %s, Tempo_Expiracao_Horas = %s, Layout_ID = %s, Exibir_No_Menu = %s WHERE ID = %s",
+                            (novo_nome, nova_url_login, nova_url_consulta, nova_url_pdf, novo_login, senha_criptografada, nova_dupla, novo_tipo, novo_status, novo_tempo_expiracao, novo_layout_id, novo_exibir_menu, dados["ID"])
+                        )
+                        conn.commit()
+                        conn.close()
+                        st.session_state.sub_tela_ser = "listar"
+                        st.session_state.mensagem_sucesso = "✏️ Serviço alterado com sucesso!"
+                        st.rerun()
             if c_cancelar.button("❌ Cancelar", key="btn_cancelar_edit_ser", width="stretch"):
                 st.session_state.sub_tela_ser = "listar"; st.rerun()
                 
@@ -1438,7 +1533,7 @@ elif menu == "📄 Manutenção de Layouts":
     st.info("Crie moldes dinâmicos para a extração inteligente de dados dos Boletins de Ocorrência.")
     
     # 1. Escolher ou Criar Layout
-    col_l1, col_l2 = st.columns([3, 1])
+    col_l1, col_l2, col_l3 = st.columns([3, 1, 1])
     layouts_df = db.listar_layouts()
     opcoes_layout = ["-- Selecione um Layout --", "➕ Criar Novo Layout..."]
     
@@ -1471,6 +1566,82 @@ elif menu == "📄 Manutenção de Layouts":
                     st.rerun()
                 else:
                     st.error("Não é possível excluir este layout (está em uso por algum serviço).")
+                    
+        # Popover para clonar o layout selecionado
+        with col_l3:
+            st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+            with st.popover("👥 Clonar Layout", use_container_width=True):
+                st.markdown(f"**Clonar Layout:** {layout_selecionado}")
+                nome_sugerido = f"{layout_selecionado} (Cópia)"
+                novo_nome_clone = st.text_input("Nome do novo Layout", value=nome_sugerido, key="input_clone_layout_nome")
+                if st.button("Confirmar Clone", use_container_width=True):
+                    if not novo_nome_clone.strip():
+                        st.error("O nome não pode ser vazio.")
+                    elif db.clonar_layout(layout_id, novo_nome_clone.strip()):
+                        st.success("Layout clonado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.error("Erro ao clonar o layout. Verifique se o nome já existe.")
+                    
+        # Central de Ajuda de Chaves Especiais e Fórmulas
+        import extrair_bo as ex_bo
+        with st.expander("💡 Central de Ajuda: Fórmulas e Metadados Especiais", expanded=False):
+            # Calcular exemplos para hora estática
+            hora_ex_padrao = "14:30"
+            faixa_ex = ex_bo.formatar_faixa_horario(hora_ex_padrao)
+            periodo_ex = ex_bo.formatar_periodo_dia(hora_ex_padrao)
+            
+            st.markdown(f"""
+            Você pode cadastrar itens especiais no layout usando palavras-chave específicas no campo **Palavra Busca (PDF)**:
+            
+            ### 📂 Metadados do Arquivo e do BO:
+            * `*ARQUIVO*` -> Retorna o nome do arquivo PDF (ex: `bo_12345.pdf`).
+            * `*BO_NUMERO*` -> Retorna o número do Boletim de Ocorrência.
+            * `*DATA_DO_REGISTRO*` -> Retorna a data em que o BO foi registrado.
+            * `*HORA_DO_REGISTRO*` -> Retorna o horário de registro do BO.
+            
+            ### 🔢 Fórmulas de Data e Hora Dinâmicas:
+            Você pode extrair parcelas de **qualquer campo de data/hora** do BO (ex: a partir de `DATA_DO_FATO`, `HORA_DO_FATO`, etc.) usando a sintaxe:
+            * `*DIA:CAMPO_ORIGEM*` -> Extrai o dia com 2 dígitos. Exemplo: `*DIA:DATA_DO_FATO*`
+            * `*MES:CAMPO_ORIGEM*` -> Extrai o mês com 2 dígitos. Exemplo: `*MES:DATA_DO_FATO*`
+            * `*ANO:CAMPO_ORIGEM*` -> Extrai o ano com 4 dígitos. Exemplo: `*ANO:DATA_DO_FATO*`
+            * `*DIA_SEMANA:CAMPO_ORIGEM*` -> Extrai o dia da semana por extenso em maiúsculo. Exemplo: `*DIA_SEMANA:DATA_DO_FATO*` (Gera `SEGUNDA-FEIRA`, `TERÇA-FEIRA`, etc.)
+            * `*HORA:CAMPO_ORIGEM*` -> Extrai apenas a hora (HH) com 2 dígitos de um campo de hora. Exemplo: `*HORA:HORA_DO_FATO*` (Extrai `14` a partir de `14:30`)
+            * `*FAIXA_HORA:CAMPO_ORIGEM*` -> Analisa a hora (HH:MM) e retorna a faixa de 3 horas correspondente. Exemplo: `*FAIXA_HORA:HORA_DO_FATO*` (Gera `{faixa_ex}` para `14:30`)
+            * `*PERIODO_HORA:CAMPO_ORIGEM*` -> Analisa a hora (HH:MM) e retorna o período do dia (MADRUGADA, MATUTINO, VESPERTINO, NOTURNO). Exemplo: `*PERIODO_HORA:HORA_DO_FATO*` (Gera `{periodo_ex}` para `14:30`)
+            
+            ### 🔗 Fórmulas de Concatenação de Colunas:
+            Você pode juntar valores de múltiplas colunas existentes do layout em uma única célula separados por vírgula:
+            * `*CONCAT:CAMPO1,CAMPO2,CAMPO3,...*` -> Concatena as colunas listadas separando-as por vírgula e espaço (campos vazios são ignorados de forma inteligente). Exemplo: `*CONCAT:BAIRRO,MUNICIPIO,SIGL ESTADO*` (Gera `"Centro, São Paulo, SP"`).
+            
+            ### 📌 Fórmulas de Valores Fixos/Constantes:
+            Você pode definir colunas com valores fixos e constantes na planilha:
+            * `*FIXO:valor*` -> Retorna o valor fixo digitado. Exemplos: `*FIXO:1*` (gera o número 1), `*FIXO:Sim*` (gera a palavra "Sim"), `*FIXO:*` (gera uma célula vazia).
+            
+            *Dica: Você pode mudar livremente o nome da coluna de destino e a ordem de exibição delas no Excel!*
+            """)
+            
+            st.markdown("---")
+            st.markdown("#### ⏱️ Testador Interativo de Horários")
+            st.write("Digite um horário no formato HH:MM para simular as fórmulas na interface:")
+            
+            hora_atual_padrao = datetime.now().strftime("%H:%M")
+            col_t1, col_t2, col_t3 = st.columns([2, 3, 3])
+            
+            hora_teste_in = col_t1.text_input("Horário (HH:MM)", value=hora_atual_padrao, key="input_hora_teste_s")
+            
+            faixa_resultado = ex_bo.formatar_faixa_horario(hora_teste_in)
+            periodo_resultado = ex_bo.formatar_periodo_dia(hora_teste_in)
+            
+            if faixa_resultado:
+                col_t2.info(f"**Faixa de Horário Calculada:**\n`{faixa_resultado}`")
+            else:
+                col_t2.error("**Faixa de Horário:**\nHorário inválido ou incorreto")
+                
+            if periodo_resultado:
+                col_t3.info(f"**Período do Dia Calculado:**\n`{periodo_resultado}`")
+            else:
+                col_t3.error("**Período do Dia:**\nHorário inválido ou incorreto")
         
         st.markdown("---")
         
@@ -1492,13 +1663,15 @@ elif menu == "📄 Manutenção de Layouts":
         # 3. Formulário para novo grupo
         with st.expander("➕ Adicionar Novo Grupo", expanded=grupos_df.empty):
             with st.form("form_novo_grupo", clear_on_submit=True):
-                g_col1, g_col2, g_col3 = st.columns([2, 1, 1])
+                g_col1, g_col2a, g_col2b, g_col3, g_col4 = st.columns([2, 1, 1, 1, 1])
                 novo_grupo = g_col1.text_input("Nome do Grupo (Ex: VÍTIMA)")
-                ordem_grupo = g_col2.number_input("Ordem de Exibição", min_value=1, value=1)
+                ordem_grupo = g_col2a.number_input("Ordem Leitura (Pastas)", min_value=1, value=1)
+                ordem_excel_g = g_col2b.number_input("Ordem Excel (Colunas)", min_value=1, value=1)
                 tem_itens = g_col3.checkbox("Tem Sub-itens?", value=True, help="Desmarque se o grupo for apenas um texto direto sem chave-valor.")
+                exportar_excel_g = g_col4.checkbox("Exportar Excel?", value=True, help="Se desmarcado, este grupo não será gerado como coluna no Excel final.")
                 
                 if st.form_submit_button("Salvar Grupo"):
-                    if db.salvar_grupo(layout_id, novo_grupo, ordem_grupo, 1 if tem_itens else 0):
+                    if db.salvar_grupo(layout_id, novo_grupo, ordem_grupo, 1 if tem_itens else 0, 1 if exportar_excel_g else 0, ordem_excel_g):
                         st.success("Grupo adicionado!")
                         st.rerun()
                     else:
@@ -1513,22 +1686,27 @@ elif menu == "📄 Manutenção de Layouts":
                 grupo_nome = row_g["Nome_Grupo"]
                 grupo_ordem = row_g["Ordem"]
                 grupo_tem_itens = row_g["Tem_Itens"]
+                grupo_exportar = row_g.get("Exportar_Excel", 1)
                 
-                # Cada grupo é um card colapsável
-                with st.expander(f"📁 {grupo_ordem}. {grupo_nome}", expanded=False):
+                # Cada grupo é um card colapsável com indicação visual de exportação
+                label_prefix = "📁" if grupo_exportar == 1 else "📁 🚫"
+                label_suffix = "" if grupo_exportar == 1 else " (Não Exportar)"
+                with st.expander(f"{label_prefix} {grupo_ordem}. {grupo_nome}{label_suffix}", expanded=False):
                     
                     editando_g = st.session_state.get(f"edit_g_{grupo_id}", False)
                     if editando_g:
                         st.markdown("**Editar Grupo:**")
-                        ge_col1, ge_col2, ge_col3, ge_col4 = st.columns([2, 1, 1, 1])
+                        ge_col1, ge_col2a, ge_col2b, ge_col3, ge_col4, ge_col5 = st.columns([2, 1, 1, 1, 1, 1])
                         g_new_nome = ge_col1.text_input("Nome Grupo", value=grupo_nome, key=f"gn_{grupo_id}")
-                        g_new_ordem = ge_col2.number_input("Ordem", value=int(grupo_ordem), min_value=1, key=f"go_{grupo_id}")
+                        g_new_ordem = ge_col2a.number_input("Ordem Leitura", value=int(grupo_ordem), min_value=1, key=f"go_{grupo_id}")
+                        g_new_ordem_excel = ge_col2b.number_input("Ordem Excel", value=int(row_g.get("Ordem_Excel", grupo_ordem)), min_value=1, key=f"goe_{grupo_id}")
                         g_new_tem_itens = ge_col3.checkbox("Tem Sub-itens?", value=bool(grupo_tem_itens), key=f"gt_{grupo_id}")
+                        g_new_exportar = ge_col4.checkbox("Exportar Excel?", value=bool(grupo_exportar == 1), key=f"gex_{grupo_id}")
                         
-                        ge_btn1, ge_btn2 = ge_col4.columns(2)
+                        ge_btn1, ge_btn2 = ge_col5.columns(2)
                         st.write("") # spacer
                         if ge_btn1.button("💾 Salvar", key=f"gsv_{grupo_id}", help="Salvar Grupo"):
-                            if db.atualizar_grupo(grupo_id, layout_id, g_new_nome, g_new_ordem, 1 if g_new_tem_itens else 0):
+                            if db.atualizar_grupo(grupo_id, layout_id, g_new_nome, g_new_ordem, 1 if g_new_tem_itens else 0, 1 if g_new_exportar else 0, g_new_ordem_excel):
                                 st.session_state[f"edit_g_{grupo_id}"] = False
                                 st.rerun()
                             else:
@@ -1553,17 +1731,18 @@ elif menu == "📄 Manutenção de Layouts":
                         # Formulario de novo item escondido dentro de um expander secundário
                         with st.expander("➕ Adicionar Novo Item", expanded=itens_df.empty):
                             with st.form(f"form_item_{grupo_id}", clear_on_submit=True):
-                                i_col1, i_col2, i_col3, i_col4 = st.columns([2, 2, 1, 1])
+                                i_col1, i_col2, i_col3a, i_col3b, i_col4 = st.columns([2, 2, 1, 1, 1])
                                 nome_excel = i_col1.text_input("Coluna Excel (Destino)", help="Nome da coluna que será gerada no Excel")
                                 palavra_busca = i_col2.text_input("Palavra Busca (PDF)", help="Dica: Use a barra | para diferenciar palavras repetidas. Exemplo: UF|Naturalidade")
-                                ordem_item = i_col3.number_input("Ordem", min_value=1, value=1, help="Ordem de extração deste item no PDF")
+                                ordem_item = i_col3a.number_input("Ordem Leitura", min_value=1, value=1, help="Ordem de extração deste item no PDF")
+                                ordem_excel_item = i_col3b.number_input("Ordem Excel", min_value=1, value=1, help="Ordem da coluna no Excel")
                                 
                                 i_col4.markdown("<div style='margin-top: 36px;'></div>", unsafe_allow_html=True)
                                 exportar_excel_bool = i_col4.checkbox("Exportar para Excel", value=True, help="Se desmarcado, este item servirá apenas como barreira de busca, mas não será gerado como coluna no arquivo Excel final.")
                                 
                                 if st.form_submit_button("Salvar Item"):
                                     exportar_excel = 1 if exportar_excel_bool else 0
-                                    if db.salvar_item(layout_id, grupo_id, nome_excel, palavra_busca, ordem_item, exportar_excel):
+                                    if db.salvar_item(layout_id, grupo_id, nome_excel, palavra_busca, ordem_item, exportar_excel, ordem_excel_item):
                                         st.success("Item adicionado!")
                                         st.rerun()
                                     else:
@@ -1593,8 +1772,9 @@ elif menu == "📄 Manutenção de Layouts":
                             st.write("") # Espaçamento bot
                             
                             # Cabeçalhos
-                            h_col1, h_col2, h_col3, h_colE, h_col4 = st.columns([1, 2.5, 2.5, 1.5, 1])
-                            h_col1.markdown("**Ordem**")
+                            h_col1a, h_col1b, h_col2, h_col3, h_colE, h_col4 = st.columns([0.7, 0.7, 2, 2, 1.2, 0.8])
+                            h_col1a.markdown("**Ordem L.**")
+                            h_col1b.markdown("**Ordem E.**")
                             h_col2.markdown("**Coluna Excel**")
                             h_col3.markdown("**Palavra Busca (PDF)**")
                             h_colE.markdown("**Exportar no Excel**")
@@ -1607,14 +1787,15 @@ elif menu == "📄 Manutenção de Layouts":
                                 editando = st.session_state.get(f"edit_i_{item_id}", False)
                                 
                                 if editando:
-                                    e_col1, e_col2, e_col3, e_colE, e_col4, e_col5 = st.columns([1, 2.5, 2.5, 1.5, 0.5, 0.5])
-                                    n_ordem = e_col1.number_input("Ordem", value=int(row_i['Ordem']), min_value=1, key=f"no_{item_id}", label_visibility="collapsed")
+                                    e_col1a, e_col1b, e_col2, e_col3, e_colE, e_col4, e_col5 = st.columns([0.7, 0.7, 2, 2, 1.2, 0.4, 0.4])
+                                    n_ordem = e_col1a.number_input("Ordem L", value=int(row_i['Ordem']), min_value=1, key=f"no_{item_id}", label_visibility="collapsed")
+                                    n_ordem_excel = e_col1b.number_input("Ordem E", value=int(row_i.get('Ordem_Excel', row_i['Ordem'])), min_value=1, key=f"noe_{item_id}", label_visibility="collapsed")
                                     n_excel = e_col2.text_input("Excel", value=row_i['Nome_Item_Excel'], key=f"ne_{item_id}", label_visibility="collapsed")
                                     n_busca = e_col3.text_input("Busca", value=row_i['Palavra_Busca'], key=f"nb_{item_id}", label_visibility="collapsed", help="Dica: Use a barra | para diferenciar palavras repetidas.")
                                     n_export = e_colE.checkbox("Sim", value=bool(row_i.get('Exportar_Excel', 1)), key=f"nx_{item_id}")
                                     
                                     if e_col4.button("💾", key=f"sv_{item_id}", help="Salvar Edição"):
-                                        if db.atualizar_item(item_id, layout_id, n_excel, n_busca, n_ordem, 1 if n_export else 0):
+                                        if db.atualizar_item(item_id, layout_id, n_excel, n_busca, n_ordem, 1 if n_export else 0, n_ordem_excel):
                                             st.session_state[f"edit_i_{item_id}"] = False
                                             st.rerun()
                                         else:
@@ -1624,8 +1805,9 @@ elif menu == "📄 Manutenção de Layouts":
                                         st.session_state[f"edit_i_{item_id}"] = False
                                         st.rerun()
                                 else:
-                                    r_col1, r_col2, r_col3, r_colE, r_col4, r_col5 = st.columns([1, 2.5, 2.5, 1.5, 0.5, 0.5])
-                                    r_col1.write(f"#{row_i['Ordem']}")
+                                    r_col1a, r_col1b, r_col2, r_col3, r_colE, r_col4, r_col5 = st.columns([0.7, 0.7, 2, 2, 1.2, 0.4, 0.4])
+                                    r_col1a.write(f"#{row_i['Ordem']}")
+                                    r_col1b.write(f"📊#{row_i.get('Ordem_Excel', row_i['Ordem'])}")
                                     r_col2.markdown(f"`{row_i['Nome_Item_Excel']}`")
                                     r_col3.markdown(f"`{row_i['Palavra_Busca']}`")
                                     def toggle_single_item(iid, st_key):
@@ -1645,18 +1827,311 @@ elif menu == "📄 Manutenção de Layouts":
                             st.info("Nenhum item cadastrado neste grupo. Adicione itens acima.")
                     else:
                         st.info(f"O robô extrairá todo o texto que estiver abaixo da palavra **{grupo_nome}** até o próximo grupo.")
+        
+        # --- PRÉVIA DO CABEÇALHO DO EXCEL ---
+        st.write("")
+        st.markdown("### 📊 Prévia do Cabeçalho da Planilha Excel")
+        st.write("Esta é a ordem exata das colunas no relatório Excel com base nas configurações acima:")
+        
+        # Função auxiliar para extrair a lista ordenada de colunas do layout
+        def obter_colunas_preview_layout(l_id: int) -> list[str]:
+            conn_prv = db.obter_conexao()
+            cursor_prv = conn_prv.cursor()
+            # 1. Busca todos os itens ativos
+            cursor_prv.execute("""
+                SELECT i.Nome_Item_Excel, i.Ordem_Excel, i.Palavra_Busca, i.ID
+                FROM layout_itens i 
+                JOIN layout_grupos g ON i.Grupo_ID = g.ID 
+                WHERE g.Layout_ID = %s AND i.Exportar_Excel = 1
+            """, (l_id,))
+            itens_db = cursor_prv.fetchall()
+            
+            # 2. Busca todos os grupos ativos sem sub-itens (colunas diretas)
+            cursor_prv.execute("""
+                SELECT Nome_Grupo, Ordem_Excel, '*TEXTO_BRUTO*', ID
+                FROM layout_grupos
+                WHERE Layout_ID = %s AND Tem_Itens = 0 AND Exportar_Excel = 1
+            """, (l_id,))
+            grupos_db = cursor_prv.fetchall()
+            conn_prv.close()
+            
+            colunas_candidatas = []
+            import extrair_bo as ex_bo
+            for nome, ordem_e, palavra, iid in itens_db:
+                colunas_candidatas.append({
+                    "nome": ex_bo.normalizar_nome_chave(nome),
+                    "ordem_excel": ordem_e,
+                    "palavra": palavra,
+                    "id": iid
+                })
+            for nome, ordem_e, palavra, iid in grupos_db:
+                colunas_candidatas.append({
+                    "nome": ex_bo.normalizar_nome_chave(nome),
+                    "ordem_excel": ordem_e,
+                    "palavra": palavra,
+                    "id": iid
+                })
+                
+            # Ordena pelo Ordem_Excel (crescente) e pelo ID (estável)
+            colunas_candidatas.sort(key=lambda x: (x["ordem_excel"], x["id"]))
+            db_keywords = [c["palavra"] for c in colunas_candidatas]
+            
+            headers = []
+            # Adiciona metadados estáticos antigos apenas como fallback se não estiverem mapeados no banco
+            if "*ARQUIVO*" not in db_keywords:
+                headers.append("ARQUIVO")
+            if "*BO_NUMERO*" not in db_keywords:
+                headers.append("BO_NUMERO")
+            if "*DATA_DO_REGISTRO*" not in db_keywords:
+                headers.append("DATA_DO_REGISTRO")
+            if "*HORA_DO_REGISTRO*" not in db_keywords:
+                headers.append("HORA_DO_REGISTRO")
+                
+            for c in colunas_candidatas:
+                nome_norm = c["nome"]
+                if nome_norm not in headers:
+                    headers.append(nome_norm)
+                    
+            return headers
 
+        colunas_preview = obter_colunas_preview_layout(layout_id)
+        if colunas_preview:
+            # Mostra uma tabela vazia no Streamlit (uma linha com células vazias) simulando o Excel
+            df_preview_mock = pd.DataFrame(columns=colunas_preview)
+            st.dataframe(df_preview_mock, use_container_width=True)
+            st.caption(f"Total de colunas ativas para exportação: **{len(colunas_preview)}**")
+        else:
+            st.info("Nenhuma coluna configurada para exportação neste layout ainda.")
+# =====================================================================
+# TELA: MANUTENÇÃO DE TIPO LOCAL (IA)
+# =====================================================================
+elif menu == "📍 Manutenção de Tipo Local":
+    st.title("📍 Manutenção de Tipo Local")
+    st.write("Cadastre os tipos de local e a descrição para que a Inteligência Artificial saiba como classificar.")
+    
+    with st.expander("➕ Adicionar Novo Tipo Local", expanded=False):
+        with st.form("form_novo_tipo_local", clear_on_submit=True):
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                novo_tipo = st.text_input("Tipo Local (ex: VIA PÚBLICA)", max_chars=100)
+            with col2:
+                status_tipo = st.selectbox("Status", ["Ativo", "Inativo"])
+                
+            nova_desc = st.text_area("Descrição para a IA", placeholder="Ex: Quando o fato ocorrer em ruas, avenidas, calçadas...", height=100)
+            
+            if st.form_submit_button("💾 Salvar Tipo Local"):
+                if not novo_tipo.strip() or not nova_desc.strip():
+                    st.warning("⚠️ Preencha o Tipo Local e a Descrição.")
+                else:
+                    if db.salvar_tipo_local(novo_tipo, nova_desc, status_tipo):
+                        st.success("✅ Tipo Local cadastrado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.error("⚠️ Erro ao cadastrar. Verifique se o Tipo Local já existe.")
+
+    st.subheader("📋 Tipos de Local Cadastrados")
+    df_tipos = db.listar_tipos_local()
+    
+    if df_tipos.empty:
+        st.info("Nenhum tipo local cadastrado ainda.")
+    else:
+        # Cabeçalho da grid para melhor visualização
+        st.markdown("<hr style='margin: 0px 0px 10px 0px;'>", unsafe_allow_html=True)
+        col_h1, col_h2, col_h3, col_h4 = st.columns([3, 5, 2, 2])
+        col_h1.markdown("**📌 Tipo Local**")
+        col_h2.markdown("**📝 Descrição para IA**")
+        col_h3.markdown("**Status**")
+        col_h4.markdown("**Ações**")
+        st.markdown("<hr style='margin: 10px 0px 10px 0px;'>", unsafe_allow_html=True)
+        
+        for index, row in df_tipos.iterrows():
+            tipo_local = row.get('Tipo_Local', row.get('tipo_local', ''))
+            status = row.get('Status', row.get('status', ''))
+            desc_ia = row.get('Descricao_IA', row.get('descricao_ia', ''))
+            row_id = row.get('ID', row.get('id', ''))
+            
+            c1, c2, c3, c4 = st.columns([3, 5, 2, 2])
+            c1.markdown(f"**{tipo_local}**")
+            c2.caption(desc_ia)
+            if status == 'Ativo':
+                c3.markdown("🟢 Ativo")
+            else:
+                c3.markdown("🔴 Inativo")
+            
+            with c4:
+                cb1, cb2 = st.columns(2)
+                edit_click = cb1.button("✏️", key=f"edit_tipo_{row_id}", help="Editar", use_container_width=True)
+                del_click = cb2.button("🗑️", key=f"del_tipo_{row_id}", help="Excluir", use_container_width=True)
+                
+            if edit_click:
+                st.session_state[f"editando_tipo_{row_id}"] = not st.session_state.get(f"editando_tipo_{row_id}", False)
+            if del_click:
+                db.excluir_tipo_local(row_id)
+                st.rerun()
+                
+            if st.session_state.get(f"editando_tipo_{row_id}", False):
+                with st.container():
+                    with st.form(f"form_edit_tipo_{row_id}"):
+                        st.write(f"**Editando:** {tipo_local}")
+                        col_e1, col_e2 = st.columns([2, 1])
+                        with col_e1:
+                            edit_tipo = st.text_input("Tipo Local", value=tipo_local)
+                        with col_e2:
+                            edit_status = st.selectbox("Status", ["Ativo", "Inativo"], index=0 if status == 'Ativo' else 1)
+                        edit_desc = st.text_area("Descrição", value=desc_ia, height=80)
+                        
+                        if st.form_submit_button("💾 Salvar Alterações"):
+                            if db.atualizar_tipo_local(row_id, edit_tipo, edit_desc, edit_status):
+                                st.success("Atualizado!")
+                                st.session_state[f"editando_tipo_{row_id}"] = False
+                                st.rerun()
+                            else:
+                                st.error("Erro ao atualizar. Nome duplicado?")
+                                
+            st.markdown("<hr style='margin: 5px 0px 10px 0px; border-top: 1px dashed #eee;'>", unsafe_allow_html=True)
+
+# =====================================================================
+# TELA: MANUTENÇÃO DE PROMPTS (IA)
+# =====================================================================
+elif menu == "📝 Manutenção de Prompts":
+    st.title("📝 Manutenção de Prompts")
+    st.write("Configure os prompts que a Inteligência Artificial utilizará para classificar os dados.")
+    
+    with st.expander("➕ Adicionar Novo Prompt", expanded=False):
+        with st.form("form_novo_prompt", clear_on_submit=True):
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                novo_nome = st.text_input("Nome do Prompt", placeholder="Ex: Classificação de Tipo Local")
+            with col2:
+                novo_tipo_prompt = st.selectbox("Vincular ao Tipo", ["Tipo Local"]) # Futuro: adicionar mais
+            
+            st.write("Dica: Use `{CATEGORIAS}` onde a IA deve ler a lista de tipos, e `{TEXTO}` onde deve ler a narrativa.")
+            nova_instrucao = st.text_area("Instrução para a IA", height=250,
+                                          value="Você é um especialista em análise criminal e inteligência policial de ponta.\nSua ÚNICA função é analisar de forma fria e objetiva a NARRATIVA de um Boletim de Ocorrência Policial e classificar onde ocorreu o fato (TIPO LOCAL).\n\nAbaixo estão as ÚNICAS categorias permitidas e suas respectivas descrições:\n---\n{CATEGORIAS}\n---\n\nNARRATIVA DO BOLETIM PARA ANÁLISE:\n\"{TEXTO}\"\n\nREGRAS DE OURO ESTRITAS:\n1. O seu retorno deve ser APENAS o nome exato da categoria em letras maiúsculas. Absolutamente mais nada.\n2. Não forneça saudações, não justifique a escolha, não use aspas. Exemplo de resposta correta: VIA PÚBLICA\n3. Se a narrativa não descrever o local, for muito vaga, ou se o local não se encaixar com total clareza em NENHUMA das categorias acima, responda APENAS: NI\n4. Em caso de múltiplos locais na mesma narrativa (ex: começou na rua e terminou em casa), classifique o local onde o CRIME PRINCIPAL foi efetivamente consumado.")
+            novo_status_prompt = st.selectbox("Status (Apenas 1 Ativo por Tipo)", ["Ativo", "Inativo"])
+            
+            if st.form_submit_button("💾 Salvar Prompt"):
+                if not novo_nome.strip() or not nova_instrucao.strip():
+                    st.warning("⚠️ Preencha o Nome e a Instrução.")
+                else:
+                    if db.salvar_prompt(novo_nome, novo_tipo_prompt, nova_instrucao, novo_status_prompt):
+                        st.success("✅ Prompt cadastrado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.error("⚠️ Erro ao cadastrar.")
+
+    st.subheader("📋 Prompts Cadastrados")
+    df_prompts = db.listar_prompts()
+    
+    if df_prompts.empty:
+        st.info("Nenhum prompt cadastrado ainda.")
+    else:
+        st.markdown("<hr style='margin: 0px 0px 10px 0px;'>", unsafe_allow_html=True)
+        col_h1, col_h2, col_h3, col_h4 = st.columns([3, 2, 1, 2])
+        col_h1.markdown("**📌 Nome do Prompt**")
+        col_h2.markdown("**Vínculo**")
+        col_h3.markdown("**Status**")
+        col_h4.markdown("**Ações**")
+        st.markdown("<hr style='margin: 10px 0px 10px 0px;'>", unsafe_allow_html=True)
+        
+        for index, row in df_prompts.iterrows():
+            nome = row.get('Nome', row.get('nome', ''))
+            tipo = row.get('Tipo', row.get('tipo', ''))
+            status = row.get('Status', row.get('status', ''))
+            instrucao = row.get('Instrução', row.get('Instrucao', row.get('instrucao', '')))
+            row_id = row.get('ID', row.get('id', ''))
+            
+            c1, c2, c3, c4 = st.columns([3, 2, 1, 2])
+            c1.markdown(f"**{nome}**")
+            c2.markdown(f"`{tipo}`")
+            
+            if status == 'Ativo':
+                c3.markdown("🟢 Ativo")
+            else:
+                c3.markdown("🔴 Inativo")
+                
+            with c4:
+                col_btn_edit, col_btn_del = st.columns(2)
+                with col_btn_edit:
+                    edit_click = st.button("✏️ Ver/Editar", key=f"edit_prompt_{row_id}", use_container_width=True)
+                with col_btn_del:
+                    delete_click = st.button("🗑️ Excluir", key=f"del_prompt_{row_id}", use_container_width=True)
+                    
+            if delete_click:
+                if db.excluir_prompt(row_id):
+                    st.success("Prompt excluído com sucesso!")
+                    st.session_state[f"editando_prompt_{row_id}"] = False
+                    st.rerun()
+                else:
+                    st.error("Erro ao excluir prompt.")
+            
+            if edit_click:
+                st.session_state[f"editando_prompt_{row_id}"] = not st.session_state.get(f"editando_prompt_{row_id}", False)
+                
+            if st.session_state.get(f"editando_prompt_{row_id}", False):
+                with st.container():
+                    with st.form(f"form_edit_prompt_{row_id}"):
+                        st.write(f"**Editando Prompt:** {nome}")
+                        col_ep1, col_ep2 = st.columns([2, 1])
+                        with col_ep1:
+                            edit_nome = st.text_input("Nome", value=nome, key=f"edit_nome_prompt_{row_id}")
+                        with col_ep2:
+                            edit_status_prompt = st.selectbox("Status", ["Ativo", "Inativo"], index=0 if status == 'Ativo' else 1, key=f"edit_status_prompt_{row_id}")
+                            
+                        edit_instrucao = st.text_area("Instrução", value=instrucao, height=250, key=f"edit_instrucao_prompt_{row_id}")
+                        
+                        c_btn1, c_btn2 = st.columns(2)
+                        with c_btn1:
+                            btn_salvar = st.form_submit_button("💾 Salvar", use_container_width=True)
+                        with c_btn2:
+                            btn_cancelar = st.form_submit_button("❌ Cancelar", use_container_width=True)
+                            
+                        if btn_salvar:
+                            if db.atualizar_prompt(row_id, edit_nome, tipo, edit_instrucao, edit_status_prompt):
+                                st.success("Atualizado!")
+                                st.session_state[f"editando_prompt_{row_id}"] = False
+                                st.rerun()
+                            else:
+                                st.error("Erro ao atualizar.")
+                                
+                        if btn_cancelar:
+                            st.session_state[f"editando_prompt_{row_id}"] = False
+                            st.rerun()
+                                
+            st.markdown("<hr style='margin: 5px 0px 10px 0px; border-top: 1px dashed #eee;'>", unsafe_allow_html=True)
 
 # =====================================================================
 # 4. TELA: IMPORTAÇÃO DE ARQUIVO DE DADOS
 # =====================================================================
 elif menu == "⚡ Tratar Planilha (Injetar UPM)":
     st.title("⚡ Tratar Planilha e Injetar UPM")
-    st.write("Envie sua planilha Excel de Ocorrências (contendo as colunas **Bairro** e **Municipio**). O robô irá higienizar os nomes (corrigindo erros e substituindo apelidos) e criará automaticamente uma nova coluna com a **UPM** correspondente. Em seguida, a planilha tratada ficará pronta para download.")
+    st.write("Envie sua planilha Excel de Ocorrências (contendo as colunas **Bairro** e **Municipio**). O robô irá higienizar os nomes (corrigindo erros e substituindo apelidos) e criará automaticamente uma nova coluna com a **UPM** correspondente.")
+    st.info("🧠 **Inteligência Artificial Ativa:** Se a planilha possuir as colunas **Narrativa** e **Tipo Local 2**, o robô analisará o texto e preencherá automaticamente a coluna **Tipo Local 2**, preservando o Tipo Local original.")
     
-    uploaded_file = st.file_uploader("Escolha um arquivo XLS ou XLSX para tratamento", type=["xls", "xlsx"])
+    def reset_processar():
+        st.session_state.processar_clicado = False
+        st.session_state.interromper = False
+        
+    uploaded_file = st.file_uploader("Escolha um arquivo XLS ou XLSX para tratamento", type=["xls", "xlsx"], on_change=reset_processar)
     
     if uploaded_file is not None:
+        col_btn1, col_btn2, col_btn3 = st.columns([2, 2, 4])
+        with col_btn1:
+            if st.button("▶️ Iniciar Processamento", use_container_width=True):
+                st.session_state.processar_clicado = True
+                st.session_state.interromper = False
+        with col_btn2:
+            if st.button("⏹️ Interromper / Cancelar", use_container_width=True):
+                st.session_state.interromper = True
+                st.session_state.processar_clicado = False
+                
+        if not st.session_state.get('processar_clicado', False):
+            if st.session_state.get('interromper', False):
+                st.warning("⚠️ Processamento interrompido / cancelado com sucesso!")
+            else:
+                st.info("👆 Clique no botão acima para iniciar o tratamento da planilha.")
+            st.stop()
+            
         try:
             # 1. Inspeciona os tipos de célula da segunda linha (primeira linha de dados) usando openpyxl
             import openpyxl
@@ -1777,6 +2252,10 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                     novos_bairros = []
                     novos_municipios = []
                     
+                    qtd_bairros_corrigidos = 0
+                    qtd_municipios_corrigidos = 0
+                    qtd_upms_injetadas = 0
+                    
                     for idx, row in df_upload.iterrows():
                         b_orig = row[col_bairro]
                         m_orig = row[col_municipio]
@@ -1813,6 +2292,13 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                             else:
                                 upm_val = "NI"
                                 
+                        if str(b_orig).strip().upper() != b_oficial:
+                            qtd_bairros_corrigidos += 1
+                        if str(m_orig).strip().upper() != m_padrao:
+                            qtd_municipios_corrigidos += 1
+                        if upm_val != "NI":
+                            qtd_upms_injetadas += 1
+                                
                         lista_upms.append(upm_val)
                             
                     # Atualiza o DataFrame com as strings higienizadas e corretas
@@ -1824,9 +2310,126 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                         df_upload["UPM"] = lista_upms
                     else:
                         df_upload.insert(0, "UPM", lista_upms)
+                        
+                    # =========================================================
+                    # PASSO EXTRA: CLASSIFICAÇÃO INTELIGENTE (IA) TIPO LOCAL 2
+                    # =========================================================
+                    col_narrativa = next((c for c in df_upload.columns if db.normalizar_texto(c) == "narrativa"), None)
+                    col_tipo2 = next((c for c in df_upload.columns if db.normalizar_texto(c).replace(" ", "") == "tipolocal2"), None)
                     
-                    # Mensagem de conclusão clara
-                    st.success(f"🎉 Planilha carregada e processada com sucesso! {len(df_upload)} linhas válidas mapeadas.")
+                    if col_tipo2:
+                        df_upload[col_tipo2] = df_upload[col_tipo2].astype(object)
+                        
+                    if col_narrativa and col_tipo2 and ia.GENAI_DISPONIVEL and ia.GCP_PROJECT_ID and db.obter_prompt_ativo("Tipo Local"):
+                        st.info("🧠 Iniciando Classificação Inteligente de Tipo Local via IA...")
+                        tipos_validos = db.obter_set_tipos_local()
+                        linhas_classificadas = 0
+                        linhas_mantidas = 0
+                        erros_ia = 0
+                        lista_erros_ia = []
+                        lista_sucesso_ia = []
+                        
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        log_container = st.empty()
+                        
+                        with log_container.container():
+                            with st.expander("📊 Log ao vivo das classificações da IA", expanded=True):
+                                st.info("⏳ Inicializando motor de Inteligência Artificial e aguardando a primeira análise...")
+                                
+                        total_linhas = len(df_upload)
+                        
+                        for idx_ia, (row_idx, row_data) in enumerate(df_upload.iterrows()):
+                            if st.session_state.get('interromper', False):
+                                st.warning("⚠️ Processamento de Inteligência Artificial interrompido pelo usuário!")
+                                break
+                                
+                            valor_atual = str(row_data[col_tipo2]).strip().upper() if pd.notna(row_data[col_tipo2]) else ""
+                            
+                            # Condição: se vazio ou se não for um tipo válido, chama a IA
+                            if not valor_atual or valor_atual not in tipos_validos:
+                                narrativa = row_data[col_narrativa]
+                                if pd.notna(narrativa) and str(narrativa).strip():
+                                    def callback_log(msg):
+                                        status_text.warning(msg)
+                                        
+                                    texto_seguro = ia.anonimizar_texto(str(narrativa))
+                                    lista_sucesso_ia.append(f"🔒 Narrativa Anonimizada (Linha {idx_ia+1}): {texto_seguro}")
+                                        
+                                    status_text.text(f"Classificando linha {idx_ia+1} de {total_linhas}...")
+                                    novo_tipo = ia.classificar("Tipo Local", str(narrativa), log_callback=callback_log)
+                                    
+                                    if novo_tipo.startswith("ERRO_"):
+                                        erros_ia += 1
+                                        lista_erros_ia.append(f"Linha {idx_ia+1}: {novo_tipo}")
+                                    elif novo_tipo == "NI":
+                                        # Se a IA não souber classificar, deixamos como estava (não altera a planilha)
+                                        linhas_mantidas += 1
+                                        lista_sucesso_ia.append(f"Linha {idx_ia+1}: Mantido [ {valor_atual if valor_atual else 'VAZIO'} ] -> A IA retornou NI (Não Identificado)")
+                                    else:
+                                        df_upload.at[row_idx, col_tipo2] = novo_tipo
+                                        linhas_classificadas += 1
+                                        lista_sucesso_ia.append(f"Linha {idx_ia+1}: Reclassificado de [ {valor_atual if valor_atual else 'VAZIO'} ] para -> [ {novo_tipo} ]")
+                                else:
+                                    # Narrativa vazia, mantém o que estava ou deixa vazio
+                                    linhas_mantidas += 1
+                            else:
+                                linhas_mantidas += 1
+                                
+                            progress_bar.progress((idx_ia + 1) / total_linhas)
+                            
+                            # Atualiza o log ao vivo na tela
+                            if lista_sucesso_ia:
+                                with log_container.container():
+                                    with st.expander("📊 Log ao vivo das classificações da IA", expanded=True):
+                                        for msg in lista_sucesso_ia[-10:]: # Mostra só as últimas 10 para não travar a tela
+                                            if "Reclassificado" in msg:
+                                                st.success(msg)
+                                            elif "Anonimizada" in msg:
+                                                st.info(msg)
+                                            else:
+                                                st.warning(msg)
+                        
+                        status_text.empty()
+                        progress_bar.empty()
+                        
+                        # Renderiza o log final completo e fechado
+                        if lista_sucesso_ia:
+                            with log_container.container():
+                                with st.expander("📊 Ver log detalhado das classificações da IA", expanded=False):
+                                    for msg in lista_sucesso_ia:
+                                        if "Reclassificado" in msg:
+                                            st.success(msg)
+                                        elif "Anonimizada" in msg:
+                                            st.info(msg)
+                                        else:
+                                            st.warning(msg)
+                                            
+                        if lista_erros_ia:
+                            with st.expander("🚨 Ver detalhes dos erros da IA"):
+                                for erro_msg in lista_erros_ia:
+                                    st.error(erro_msg)
+                                    
+                    elif col_narrativa and col_tipo2:
+                        motivos_falta = []
+                        if not ia.GENAI_DISPONIVEL:
+                            motivos_falta.append("Pacote do Gemini não instalado")
+                        if not ia.GCP_PROJECT_ID:
+                            motivos_falta.append("ID do Projeto GCP não configurado no arquivo .env")
+                        if not db.obter_prompt_ativo("Tipo Local"):
+                            motivos_falta.append("Prompt para 'Tipo Local' não cadastrado ou inativo no sistema")
+                            
+                        st.warning(f"⚠️ Colunas para IA encontradas, mas a classificação foi pulada. Motivos: {', '.join(motivos_falta)}.")
+
+                    
+                    # Mensagem de conclusão compacta e organizada
+                    st.success("🎉 Processamento Concluído com Sucesso!")
+                    qtd_upms_ni = len(df_upload) - qtd_upms_injetadas
+                    
+                    st.info(f"🎯 **Tratamento (Bairros e Municípios):** {len(df_upload)} linhas | {qtd_municipios_corrigidos} Municípios Higienizados | {qtd_bairros_corrigidos} Bairros Corrigidos | {qtd_upms_injetadas} UPMs Injetadas | {qtd_upms_ni} UPMs 'NI'")
+                    
+                    if col_narrativa and col_tipo2 and ia.GENAI_DISPONIVEL:
+                        st.info(f"🧠 **Classificação por Inteligência Artificial:** {linhas_classificadas} Reclassificações | {linhas_mantidas} Mantidos (Sem Alteração) | {erros_ia} Erros")
                     
                     st.subheader("Prévia dos Dados Processados")
                     # Exibe no Streamlit apenas as primeiras 100 linhas como prévia para performance
@@ -2062,6 +2665,8 @@ elif menu == "⚙️ Configurações":
                             df_layouts = pd.read_excel(xls, sheet_name="Layouts") if "Layouts" in xls.sheet_names else pd.DataFrame()
                             df_grupos = pd.read_excel(xls, sheet_name="Grupos") if "Grupos" in xls.sheet_names else pd.DataFrame()
                             df_itens = pd.read_excel(xls, sheet_name="Itens") if "Itens" in xls.sheet_names else pd.DataFrame()
+                            df_tipos_local = pd.read_excel(xls, sheet_name="Tipos Local") if "Tipos Local" in xls.sheet_names else pd.DataFrame()
+                            df_prompts = pd.read_excel(xls, sheet_name="Prompts") if "Prompts" in xls.sheet_names else pd.DataFrame()
                             
                             # Executa as cargas na ordem correta
                             res_mun = db.importar_municipios_lote(df_mun)
@@ -2073,6 +2678,16 @@ elif menu == "⚙️ Configurações":
                             res_grp = db.importar_grupos_lote(df_grupos)
                             res_itn = db.importar_itens_lote(df_itens)
                             
+                            res_tipos_local = {"inseridos": 0, "pulados": 0, "erros": 0}
+                            res_prompts = {"inseridos": 0, "pulados": 0, "erros": 0}
+                            if not df_tipos_local.empty:
+                                res_tipos_local = db.importar_tipos_local_lote(df_tipos_local)
+                            if not df_prompts.empty:
+                                res_prompts = db.importar_prompts_ia_lote(df_prompts)
+                            
+                            # Correção de integridade para PostgreSQL
+                            db.sincronizar_sequencias()
+                            
                             st.success("🎉 Carga de dados realizada com sucesso!")
                             
                             # Exibe o resultado de forma visualmente rica
@@ -2083,11 +2698,13 @@ elif menu == "⚙️ Configurações":
                             with col2:
                                 st.metric("Bairros", f"+{res_bai['inseridos']}", f"Ignorados: {res_bai['pulados']} | Erros: {res_bai['erros']}")
                             with col3:
-                                st.metric("Nomes Alternativos", f"+{res_alt['inseridos']}", f"Ignorados: {res_alt['pulados']} | Erros: {res_alt['erros']}")
-                            with col4:
                                 st.metric("UPMs Mapeadas", f"+{res_upm['inseridos']}", f"Ignorados: {res_upm['pulados']} | Erros: {res_upm['erros']}")
-                            with col5:
+                            with col4:
                                 st.metric("Serviços", f"+{res_serv['inseridos']}", f"Ignorados: {res_serv['pulados']} | Erros: {res_serv['erros']}")
+                            with col5:
+                                total_ia = res_tipos_local.get('inseridos', 0) + res_prompts.get('inseridos', 0)
+                                erros_ia = res_tipos_local.get('erros', 0) + res_prompts.get('erros', 0)
+                                st.metric("Config. IA", f"+{total_ia}", f"Erros: {erros_ia}")
                 except Exception as e:
                     st.error(f"⚠️ Erro ao processar arquivo: {str(e)}")
                     
@@ -2101,7 +2718,7 @@ elif menu == "⚙️ Configurações":
                 try:
                     conn_exp = db.engine
                     
-                    df_mun_exp = db.ajustar_colunas(pd.read_sql("SELECT Municipio, Estado FROM municipios", conn_exp))
+                    df_mun_exp = db.ajustar_colunas(pd.read_sql("SELECT Municipio, Estado, id_municipio_srop FROM municipios", conn_exp))
                     df_bai_exp = db.ajustar_colunas(pd.read_sql("SELECT Bairro, Municipio FROM bairros", conn_exp))
                     df_alt_exp = db.ajustar_colunas(pd.read_sql("SELECT b.Bairro as Bairro_Oficial, b.Municipio, a.Nome_Alternativo FROM bairros_alternativos a JOIN bairros b ON a.Bairro_ID = b.ID", conn_exp))
                     df_upm_exp = pd.read_sql("""
@@ -2115,11 +2732,14 @@ elif menu == "⚙️ Configurações":
                         LEFT JOIN upm_bairros ub ON u.ID = ub.UPM_ID 
                         LEFT JOIN bairros b ON ub.Bairro_ID = b.ID
                     """, conn_exp)
-                    df_serv_exp = db.ajustar_colunas(pd.read_sql("SELECT Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status FROM servicos", conn_exp))
+                    df_serv_exp = db.ajustar_colunas(pd.read_sql("SELECT Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status, Exibir_No_Menu FROM servicos", conn_exp))
                     
                     df_layouts_exp = db.ajustar_colunas(pd.read_sql("SELECT Nome_Layout FROM layouts", conn_exp))
-                    df_grupos_exp = db.ajustar_colunas(pd.read_sql("SELECT l.Nome_Layout, g.Nome_Grupo, g.Ordem, g.Tem_Itens FROM layout_grupos g JOIN layouts l ON g.Layout_ID = l.ID", conn_exp))
-                    df_itens_exp = db.ajustar_colunas(pd.read_sql("SELECT l.Nome_Layout, g.Nome_Grupo, i.Nome_Item_Excel, i.Palavra_Busca, i.Ordem, i.Exportar_Excel FROM layout_itens i JOIN layout_grupos g ON i.Grupo_ID = g.ID JOIN layouts l ON g.Layout_ID = l.ID", conn_exp))
+                    df_grupos_exp = db.ajustar_colunas(pd.read_sql("SELECT l.Nome_Layout, g.Nome_Grupo, g.Ordem, g.Ordem_Excel, g.Tem_Itens, g.Exportar_Excel FROM layout_grupos g JOIN layouts l ON g.Layout_ID = l.ID", conn_exp))
+                    df_itens_exp = db.ajustar_colunas(pd.read_sql("SELECT l.Nome_Layout, g.Nome_Grupo, i.Nome_Item_Excel, i.Palavra_Busca, i.Ordem, i.Ordem_Excel, i.Exportar_Excel FROM layout_itens i JOIN layout_grupos g ON i.Grupo_ID = g.ID JOIN layouts l ON g.Layout_ID = l.ID", conn_exp))
+                    
+                    df_tipos_local_exp = db.ajustar_colunas(pd.read_sql("SELECT Tipo_Local, Descricao_IA, Status FROM tipos_local", conn_exp))
+                    df_prompts_exp = db.ajustar_colunas(pd.read_sql("SELECT Nome, Tipo, Instrucao, Status FROM prompts_ia", conn_exp))
                     
                     # Não é necessário fechar a engine do SQLAlchemy
                     
@@ -2134,6 +2754,8 @@ elif menu == "⚙️ Configurações":
                         df_layouts_exp.to_excel(writer, index=False, sheet_name="Layouts")
                         df_grupos_exp.to_excel(writer, index=False, sheet_name="Grupos")
                         df_itens_exp.to_excel(writer, index=False, sheet_name="Itens")
+                        df_tipos_local_exp.to_excel(writer, index=False, sheet_name="Tipos Local")
+                        df_prompts_exp.to_excel(writer, index=False, sheet_name="Prompts")
                     
                     st.session_state.export_ready_data = buffer_export.getvalue()
                     st.success("✅ Banco compilado com sucesso! Clique no botão abaixo para baixar.")
@@ -2307,6 +2929,55 @@ elif menu.startswith("servico_"):
                 with col_data_fim:
                     data_final = st.date_input("Data Final do Registro", value=ontem, format="DD/MM/YYYY", key=f"exec_dt_fim_{id_servico}")
                 
+                # Novos campos do SROP
+                df_muns_sel = db.listar_dados("municipios")
+                options_mun = []
+                idx_default_mun = 0
+                df_muns_filtrado = pd.DataFrame()
+                
+                if not df_muns_sel.empty:
+                    # Filtra apenas os municípios que possuem id_municipio_srop preenchido
+                    df_muns_filtrado = df_muns_sel[df_muns_sel["id_municipio_srop"].notna() & (df_muns_sel["id_municipio_srop"].str.strip() != "")]
+                    
+                    if not df_muns_filtrado.empty:
+                        # Ordena os municípios por nome alfabeticamente
+                        df_muns_filtrado = df_muns_filtrado.sort_values(by="Municipio")
+                        
+                        # Separa o município com ID SROP igual a 9167 para colocar no topo da lista
+                        df_9167 = df_muns_filtrado[df_muns_filtrado["id_municipio_srop"].str.strip() == "9167"]
+                        df_outros = df_muns_filtrado[df_muns_filtrado["id_municipio_srop"].str.strip() != "9167"]
+                        
+                        # Reconstrói o DataFrame com o 9167 no topo
+                        df_muns_filtrado = pd.concat([df_9167, df_outros]).reset_index(drop=True)
+                        
+                        options_mun = [f"{row['Municipio']} - {row['Estado']}" for _, row in df_muns_filtrado.iterrows()]
+                        # O índice padrão será 0 (o primeiro item da lista) que agora corresponde ao 9167 se ele existir
+                        idx_default_mun = 0
+                            
+                st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+                col_mun_sel, col_size_sel, col_bo_sel = st.columns([2, 1, 1])
+                
+                with col_mun_sel:
+                    if options_mun:
+                        mun_selecionado_str = st.selectbox("Município (SROP)", options_mun, index=idx_default_mun, key=f"exec_mun_srop_{id_servico}")
+                        idx_sel = options_mun.index(mun_selecionado_str)
+                        id_municipio_val = df_muns_filtrado.iloc[idx_sel].get("id_municipio_srop", "")
+                    else:
+                        st.selectbox("Município (SROP)", ["Nenhum município com ID SROP cadastrado"], key=f"exec_mun_srop_empty_{id_servico}", disabled=True)
+                        id_municipio_val = ""
+                        
+                with col_size_sel:
+                    size_val = st.number_input("Total de Registros (Size)", min_value=1, max_value=1000, value=1, step=10, key=f"exec_size_{id_servico}")
+                    
+                with col_bo_sel:
+                    st.text_input("Número do BO (Em Desenvolvimento)", value="", disabled=True, key=f"exec_bo_num_{id_servico}")
+                    bo_val = None
+                    
+                st.checkbox("Filtrar por Data de Ocorrência Fato (Em Desenvolvimento)", value=False, disabled=True, key=f"exec_chk_fato_{id_servico}")
+                data_ini_fato_str = None
+                data_fim_fato_str = None
+                
+                st.markdown("<p style='font-size: 13px; color: #888888; font-style: italic; margin-top: -5px;'>ℹ️ Os filtros de 'Número do BO' e 'Data do Fato' estão inativos na interface e não serão enviados na consulta pois estão em fase de homologação da nova API SROP.</p>", unsafe_allow_html=True)
                 st.write("")
                 
                 # Trava de Segurança para períodos longos
@@ -2342,6 +3013,13 @@ elif menu.startswith("servico_"):
                     st.rerun()
                 
                 if btn_run:
+                    # Validação em tempo de execução para garantir que as tags obrigatórias estão na URL base
+                    tags_obrigatorias = ["{DataInicialRegistro}", "{DataFinalRegistro}", "{idMunicipio}", "{size}"]
+                    tags_faltantes = [t for t in tags_obrigatorias if t not in url_consulta]
+                    if tags_faltantes:
+                        st.error(f"⚠️ Execução Abortada: O Endereço da Tela de Consulta cadastrado para este serviço SROP é inválido por não conter as tags obrigatórias: {', '.join(tags_faltantes)}. Por favor, corrija o cadastro do serviço.")
+                        st.stop()
+                        
                     import shutil, os
                     
                     st.info("💡 **A extração começou!** Se você perceber que colocou filtros errados ou quiser desistir, clique no botão **Cancelar Extração Agora** acima.")
@@ -2374,7 +3052,12 @@ elif menu.startswith("servico_"):
                                 data_inicial=data_ini_str,
                                 data_final=data_fim_str,
                                 temp_dir=temp_dir,
-                                status_callback=atualizar_status
+                                status_callback=atualizar_status,
+                                id_municipio=id_municipio_val,
+                                size=size_val,
+                                numero_boletim=bo_val,
+                                data_ini_fato=data_ini_fato_str,
+                                data_fim_fato=data_fim_fato_str
                             )
                             
                             if not pdf_paths:

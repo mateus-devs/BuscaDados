@@ -19,4 +19,7 @@ dados/
 
 # Keycloak Binaries and Server Data
 keycloak-*/
-keycloak-*.zip
+keycloak-*.zip
+
+# Google Cloud credentials (stored securely in DB now)
+google-credentials.json

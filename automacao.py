@@ -217,7 +217,12 @@ def consultar_e_baixar_srop(
     data_inicial: str,
     data_final: str,
     temp_dir: str,
-    status_callback=None
+    status_callback=None,
+    id_municipio: str = None,
+    size: int = None,
+    numero_boletim: str = None,
+    data_ini_fato: str = None,
+    data_fim_fato: str = None
 ) -> list[str]:
     """
     Executa a consulta e download dos PDFs em segundo plano utilizando os cookies da sessão persistida.
@@ -236,7 +241,43 @@ def consultar_e_baixar_srop(
         # Formatação da URL de Consulta e requisição
         url_consulta_formatada = url_consulta.replace("{DataInicialRegistro}", data_inicial).replace("{DataFinalRegistro}", data_final)
         
+        if id_municipio is not None:
+            url_consulta_formatada = url_consulta_formatada.replace("{idMunicipio}", str(id_municipio))
+        if size is not None:
+            url_consulta_formatada = url_consulta_formatada.replace("{size}", str(size))
+            
+        # Condicional para número do boletim
+        if numero_boletim:
+            url_consulta_formatada = url_consulta_formatada.replace("{numeroBoletimOcorrencia}", str(numero_boletim))
+        else:
+            url_consulta_formatada = url_consulta_formatada.replace("&numeroBoletimOcorrencia={numeroBoletimOcorrencia}", "")
+            url_consulta_formatada = url_consulta_formatada.replace("?numeroBoletimOcorrencia={numeroBoletimOcorrencia}", "?")
+            url_consulta_formatada = url_consulta_formatada.replace("numeroBoletimOcorrencia={numeroBoletimOcorrencia}", "")
+            
+        # Condicional para data inicial do fato
+        if data_ini_fato:
+            url_consulta_formatada = url_consulta_formatada.replace("{DataInicialFato}", str(data_ini_fato))
+        else:
+            url_consulta_formatada = url_consulta_formatada.replace("&DataInicialFato={DataInicialFato}", "")
+            url_consulta_formatada = url_consulta_formatada.replace("?DataInicialFato={DataInicialFato}", "?")
+            url_consulta_formatada = url_consulta_formatada.replace("DataInicialFato={DataInicialFato}", "")
+            
+        # Condicional para data final do fato
+        if data_fim_fato:
+            url_consulta_formatada = url_consulta_formatada.replace("{DataFinalFato}", str(data_fim_fato))
+        else:
+            url_consulta_formatada = url_consulta_formatada.replace("&DataFinalFato={DataFinalFato}", "")
+            url_consulta_formatada = url_consulta_formatada.replace("?DataFinalFato={DataFinalFato}", "?")
+            url_consulta_formatada = url_consulta_formatada.replace("DataFinalFato={DataFinalFato}", "")
+            
+        # Limpa possíveis restos de formatação na URL
+        url_consulta_formatada = url_consulta_formatada.replace("?&", "?")
+        url_consulta_formatada = url_consulta_formatada.rstrip("&").rstrip("?")
+        
+        # Exibe a URL gerada no console de comando e no status do Streamlit
+        print(f"\n[LOG SROP] URL de Consulta Montada: {url_consulta_formatada}\n")
         if status_callback:
+            status_callback(f"URL de Consulta: {url_consulta_formatada}")
             status_callback("Verificando sessão e consultando Boletins de Ocorrência...")
             
         # Prepara os headers com o token Bearer caso tenha sido capturado
@@ -277,8 +318,8 @@ def consultar_e_baixar_srop(
             if numero:
                 bo_numeros.append(str(numero).strip())
                 
-        # Garante lista única
-        bo_numeros = list(set(bo_numeros))
+        # Garante lista única mantendo a ordem original da consulta
+        bo_numeros = list(dict.fromkeys(bo_numeros))
         total_bo = len(bo_numeros)
         
         if status_callback:
