@@ -2169,453 +2169,473 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
     st.write("Envie sua planilha Excel de Ocorrências (contendo as colunas **Bairro** e **Municipio**). O robô irá higienizar os nomes (corrigindo erros e substituindo apelidos) e criará automaticamente uma nova coluna com a **UPM** correspondente.")
     st.info("🧠 **Inteligência Artificial Ativa:** Se a planilha possuir as colunas **Narrativa** e **Tipo Local 2**, o robô analisará o texto e preencherá automaticamente a coluna **Tipo Local 2**, preservando o Tipo Local original.")
     
-    # Checkbox profissional para ativação opcional da IA (fixo e desmarcado por padrão)
-    usar_ia = st.checkbox(
-        "🧠 Executar Classificação Cognitiva de Tipo Local via IA", 
-        value=False, 
-        help="Utiliza Inteligência Artificial (Gemini) para categorizar a coluna 'Tipo Local 2' com base no texto da Narrativa. Se desmarcado, o processamento fará apenas a higienização de nomes e injeção de UPMs."
-    )
-    
     def reset_processar():
         st.session_state.processar_clicado = False
         st.session_state.interromper = False
+        # Limpa estados de execuções anteriores na sessão
+        for k in ['df_upload_proc', 'qtd_bairros_corrigidos', 'qtd_municipios_corrigidos', 'qtd_upms_injetadas', 'colunas_data_fato', 'linhas_classificadas', 'linhas_mantidas', 'erros_ia', 'lista_erros_ia', 'lista_sucesso_ia', 'logs_ordenados']:
+            if k in st.session_state:
+                del st.session_state[k]
         
-    uploaded_file = st.file_uploader("Escolha um arquivo XLS ou XLSX para tratamento", type=["xls", "xlsx"], on_change=reset_processar)
-    
-    if uploaded_file is not None:
+    # Formulário para agrupar as configurações e ações de processamento, impedindo reruns ao interagir com o checkbox
+    with st.form("form_tratamento_planilha", border=False):
+        # Checkbox profissional para ativação opcional da IA (fixo e desmarcado por padrão, sempre visível)
+        usar_ia = st.checkbox(
+            "🧠 Executar Classificação Cognitiva de Tipo Local via IA", 
+            value=False, 
+            help="Utiliza Inteligência Artificial (Gemini) para categorizar a coluna 'Tipo Local 2' com base no texto da Narrativa. Se desmarcado, o processamento fará apenas a higienização de nomes e injeção de UPMs."
+        )
+        
+        uploaded_file = st.file_uploader("Escolha um arquivo XLS ou XLSX para tratamento", type=["xls", "xlsx"])
+        
         st.write("")
         col_btn1, col_btn2, col_btn3 = st.columns([2, 2, 4])
         with col_btn1:
-            if st.button("▶️ Iniciar Processamento", use_container_width=True):
-                st.session_state.processar_clicado = True
-                st.session_state.interromper = False
-                # Limpa estados de execuções anteriores na sessão
-                for k in ['df_upload_proc', 'qtd_bairros_corrigidos', 'qtd_municipios_corrigidos', 'qtd_upms_injetadas', 'colunas_data_fato', 'linhas_classificadas', 'linhas_mantidas', 'erros_ia', 'lista_erros_ia', 'lista_sucesso_ia', 'logs_ordenados']:
-                    if k in st.session_state:
-                        del st.session_state[k]
+            btn_iniciar = st.form_submit_button("▶️ Iniciar Processamento", use_container_width=True)
         with col_btn2:
-            if st.button("⏹️ Interromper / Cancelar", use_container_width=True):
-                st.session_state.interromper = True
-                st.session_state.processar_clicado = False
-                st.rerun()
-                
-        # Permite continuar o fluxo se foi clicado ou se foi interrompido mas já possui dados processados parciais
-        pode_exibir_resultado = st.session_state.get('interromper', False) and 'df_upload_proc' in st.session_state
-        if not st.session_state.get('processar_clicado', False) and not pode_exibir_resultado:
-            if st.session_state.get('interromper', False):
-                st.warning("⚠️ Processamento interrompido / cancelado com sucesso!")
-            else:
-                st.info("👆 Clique no botão acima para iniciar o tratamento da planilha.")
-            st.stop()
+            btn_cancelar = st.form_submit_button("⏹️ Interromper / Cancelar", use_container_width=True)
+
+    if btn_iniciar:
+        if uploaded_file is None:
+            st.warning("⚠️ Por favor, escolha um arquivo para tratamento antes de iniciar o processamento.")
+        else:
+            reset_processar()
+            st.session_state.processar_clicado = True
+            # st.rerun() não é chamado aqui para permitir o processamento imediato do arquivo com a requisição do form
             
-        try:
-            # 1. Inspeciona os tipos de célula da segunda linha (primeira linha de dados) usando openpyxl
-            import openpyxl
-            import re
-            uploaded_file.seek(0)
-            wb = openpyxl.load_workbook(uploaded_file, read_only=True, data_only=True)
-            ws = wb.active
+    if btn_cancelar:
+        st.session_state.interromper = True
+        st.session_state.processar_clicado = False
+        st.rerun()
             
-            linhas = list(ws.iter_rows(min_row=1, max_row=2))
-            wb.close()
-            
-            dtype_dict = {}
-            colunas_data = []  # Colunas que o Excel armazena como data
-            
-            # Padrões de number_format que indicam que a célula é uma data
-            padrao_data = re.compile(r'[dDmMyY].*[dDmMyY]')
-            
-            if len(linhas) >= 2:
-                header_row = linhas[0]  # Linha 1: cabeçalhos
-                data_row = linhas[1]    # Linha 2: primeira linha de dados
-                
-                for header_cell, data_cell in zip(header_row, data_row):
-                    col_name = header_cell.value
-                    if col_name is None:
-                        continue
-                    # Se a célula de dados é do tipo texto ('s') no Excel, forçar leitura como str
-                    if data_cell.data_type == 's':
-                        dtype_dict[col_name] = str
-                    # Se a célula de dados é do tipo data ('d'), ou is_date, ou tem number_format de data
-                    elif data_cell.data_type == 'd' or data_cell.is_date:
-                        colunas_data.append(col_name)
-                    elif data_cell.data_type == 'n' and data_cell.number_format and padrao_data.search(str(data_cell.number_format)):
-                        colunas_data.append(col_name)
-            
-            # 2. Carrega os dados reais aplicando os dtypes detectados da planilha
-            uploaded_file.seek(0)
-            df_upload = pd.read_excel(uploaded_file, dtype=dtype_dict)
-            
-            # 3. Converte colunas de data que ficaram como número serial do Excel para datetime real
-            #    Inclui as detectadas pelo openpyxl + fallback para qualquer coluna numérica inteira
-            #    no range de datas seriais do Excel (cobre cenários que o openpyxl não detectou)
-            for col in df_upload.columns:
-                eh_coluna_data = col in colunas_data
-                
-                # Fallback: se a coluna não foi detectada pelo openpyxl mas contém apenas inteiros
-                # no range de datas seriais do Excel (20000-80000 = anos 1954-2118), tratar como data
-                if not eh_coluna_data and df_upload[col].dtype in ['int64', 'float64']:
-                    valores_validos = df_upload[col].dropna()
-                    if not valores_validos.empty:
-                        todos_inteiros = all(float(v).is_integer() for v in valores_validos)
-                        if todos_inteiros:
-                            min_val = valores_validos.min()
-                            max_val = valores_validos.max()
-                            if 20000 < min_val and max_val < 80000:
-                                eh_coluna_data = True
-                                colunas_data.append(col)
-                
-                if eh_coluna_data:
-                    def converter_data_serial(val):
-                        if pd.isna(val):
-                            return val
-                        # Se já for datetime, manter como está
-                        if isinstance(val, (pd.Timestamp, datetime)):
-                            return val
-                        # Se for número serial do Excel (int ou float), converter para datetime real
-                        try:
-                            n = float(val)
-                            if 1 < n < 100000:
-                                return pd.to_datetime(n - 2, unit='D', origin='1900-01-01')
-                        except (ValueError, TypeError):
-                            pass
-                        # Se for string no formato DD/MM/AAAA, converter para datetime
-                        try:
-                            return pd.to_datetime(val, dayfirst=True)
-                        except Exception:
-                            pass
+    # Placeholder para resultados (prévia de dados e botão de download)
+    placeholder_resultados = st.empty()
+    if st.session_state.get('processar_clicado', False):
+        placeholder_resultados.empty()
+
+    # Permite continuar o fluxo se já possui dados processados na sessão (completo ou parcial interrompido)
+    pode_exibir_resultado = 'df_upload_proc' in st.session_state
+    if not st.session_state.get('processar_clicado', False) and not pode_exibir_resultado:
+        if st.session_state.get('interromper', False):
+            st.warning("⚠️ Processamento interrompido / cancelado com sucesso!")
+        else:
+            st.info("👆 Clique no botão acima para iniciar o tratamento da planilha.")
+        st.stop()
+
+    try:
+        # 1. Inspeciona os tipos de célula da segunda linha (primeira linha de dados) usando openpyxl
+        import openpyxl
+        import re
+        uploaded_file.seek(0)
+        wb = openpyxl.load_workbook(uploaded_file, read_only=True, data_only=True)
+        ws = wb.active
+
+        linhas = list(ws.iter_rows(min_row=1, max_row=2))
+        wb.close()
+
+        dtype_dict = {}
+        colunas_data = []  # Colunas que o Excel armazena como data
+
+        # Padrões de number_format que indicam que a célula é uma data
+        padrao_data = re.compile(r'[dDmMyY].*[dDmMyY]')
+
+        if len(linhas) >= 2:
+            header_row = linhas[0]  # Linha 1: cabeçalhos
+            data_row = linhas[1]    # Linha 2: primeira linha de dados
+
+            for header_cell, data_cell in zip(header_row, data_row):
+                col_name = header_cell.value
+                if col_name is None:
+                    continue
+                # Se a célula de dados é do tipo texto ('s') no Excel, forçar leitura como str
+                if data_cell.data_type == 's':
+                    dtype_dict[col_name] = str
+                # Se a célula de dados é do tipo data ('d'), ou is_date, ou tem number_format de data
+                elif data_cell.data_type == 'd' or data_cell.is_date:
+                    colunas_data.append(col_name)
+                elif data_cell.data_type == 'n' and data_cell.number_format and padrao_data.search(str(data_cell.number_format)):
+                    colunas_data.append(col_name)
+
+        # 2. Carrega os dados reais aplicando os dtypes detectados da planilha
+        uploaded_file.seek(0)
+        df_upload = pd.read_excel(uploaded_file, dtype=dtype_dict)
+
+        # 3. Converte colunas de data que ficaram como número serial do Excel para datetime real
+        #    Inclui as detectadas pelo openpyxl + fallback para qualquer coluna numérica inteira
+        #    no range de datas seriais do Excel (cobre cenários que o openpyxl não detectou)
+        for col in df_upload.columns:
+            eh_coluna_data = col in colunas_data
+
+            # Fallback: se a coluna não foi detectada pelo openpyxl mas contém apenas inteiros
+            # no range de datas seriais do Excel (20000-80000 = anos 1954-2118), tratar como data
+            if not eh_coluna_data and df_upload[col].dtype in ['int64', 'float64']:
+                valores_validos = df_upload[col].dropna()
+                if not valores_validos.empty:
+                    todos_inteiros = all(float(v).is_integer() for v in valores_validos)
+                    if todos_inteiros:
+                        min_val = valores_validos.min()
+                        max_val = valores_validos.max()
+                        if 20000 < min_val and max_val < 80000:
+                            eh_coluna_data = True
+                            colunas_data.append(col)
+
+            if eh_coluna_data:
+                def converter_data_serial(val):
+                    if pd.isna(val):
                         return val
-                    df_upload[col] = df_upload[col].apply(converter_data_serial)
-            
-            # Guarda a lista de colunas de data para formatar na exportação
-            st.session_state['colunas_data_detectadas'] = colunas_data
-            
-            # Verifica se a primeira coluna é RISP — se for, remove (será substituída por UPM)
-            primeira_col = df_upload.columns[0]
-            if str(primeira_col).strip().upper() == "RISP":
-                df_upload = df_upload.drop(columns=[primeira_col])
-            
-            # Encontra colunas Bairro e Municipio de forma flexível (ignorando acentos e case)
-            col_bairro = None
-            col_municipio = None
-            
-            for col in df_upload.columns:
-                col_norm = db.normalizar_texto(col)
-                if col_norm == "bairro":
-                    col_bairro = col
-                elif col_norm == "municipio":
-                    col_municipio = col
-            
-            if not col_bairro or not col_municipio:
-                st.error("⚠️ Erro: A planilha enviada deve conter colunas chamadas **Bairro** e **Municipio** (ou Município).")
-                st.info("Colunas encontradas no arquivo: " + ", ".join(df_upload.columns.tolist()))
+                    # Se já for datetime, manter como está
+                    if isinstance(val, (pd.Timestamp, datetime)):
+                        return val
+                    # Se for número serial do Excel (int ou float), converter para datetime real
+                    try:
+                        n = float(val)
+                        if 1 < n < 100000:
+                            return pd.to_datetime(n - 2, unit='D', origin='1900-01-01')
+                    except (ValueError, TypeError):
+                        pass
+                    # Se for string no formato DD/MM/AAAA, converter para datetime
+                    try:
+                        return pd.to_datetime(val, dayfirst=True)
+                    except Exception:
+                        pass
+                    return val
+                df_upload[col] = df_upload[col].apply(converter_data_serial)
+
+        # Guarda a lista de colunas de data para formatar na exportação
+        st.session_state['colunas_data_detectadas'] = colunas_data
+
+        # Verifica se a primeira coluna é RISP — se for, remove (será substituída por UPM)
+        primeira_col = df_upload.columns[0]
+        if str(primeira_col).strip().upper() == "RISP":
+            df_upload = df_upload.drop(columns=[primeira_col])
+
+        # Encontra colunas Bairro e Municipio de forma flexível (ignorando acentos e case)
+        col_bairro = None
+        col_municipio = None
+
+        for col in df_upload.columns:
+            col_norm = db.normalizar_texto(col)
+            if col_norm == "bairro":
+                col_bairro = col
+            elif col_norm == "municipio":
+                col_municipio = col
+
+        if not col_bairro or not col_municipio:
+            st.error("⚠️ Erro: A planilha enviada deve conter colunas chamadas **Bairro** e **Municipio** (ou Município).")
+            st.info("Colunas encontradas no arquivo: " + ", ".join(df_upload.columns.tolist()))
+        else:
+            # Remove linhas onde bairro ou municipio estão vazios
+            df_upload = df_upload.dropna(subset=[col_bairro, col_municipio])
+
+            if df_upload.empty:
+                st.warning("⚠️ Atenção: A planilha enviada não contém linhas de dados válidas (bairro e município vazios).")
             else:
-                # Remove linhas onde bairro ou municipio estão vazios
-                df_upload = df_upload.dropna(subset=[col_bairro, col_municipio])
-                
-                if df_upload.empty:
-                    st.warning("⚠️ Atenção: A planilha enviada não contém linhas de dados válidas (bairro e município vazios).")
+                # Inicializa variáveis locais de estatísticas de IA com valor padrão para evitar NameError
+                linhas_classificadas = 0
+                linhas_mantidas = 0
+                erros_ia = 0
+                lista_erros_ia = []
+                lista_sucesso_ia = []
+                logs_ordenados = []
+
+                if st.session_state.get('processar_clicado', False):
+                    # Obtém o cache de UPMs na memória
+                    # Obtém os caches na memória do banco de dados
+                    mapa_upms = db.obter_mapeamento_upms()
+                    mapa_nomes_mun = db.obter_mapeamento_nomes_municipios()
+                    mapa_nomes_bai = db.obter_mapeamento_nomes_bairros()
+                    mapa_alternativos_bai = db.obter_mapeamento_alternativo_bairros()
+                    mapa_mun_todos = db.obter_municipios_com_bairro_todos_unico()
+
+                    lista_upms = []
+                    novos_bairros = []
+                    novos_municipios = []
+
+                    qtd_bairros_corrigidos = 0
+                    qtd_municipios_corrigidos = 0
+                    qtd_upms_injetadas = 0
+
+                    for idx, row in df_upload.iterrows():
+                        b_orig = row[col_bairro]
+                        m_orig = row[col_municipio]
+
+                        # 1. Padroniza e corrige o Município conforme as regras do usuário (TRIM + UPPER + apelidos)
+                        m_padrao = db.padronizar_municipio(m_orig)
+                        novos_municipios.append(m_padrao)
+
+                        # 2. Padroniza e corrige o Bairro (TRIM + UPPER + mojibake)
+                        b_padrao = db.corrigir_mojibake(b_orig).strip().upper()
+
+                        # 3. Normaliza para fazer a busca no banco de dados
+                        b_norm = db.normalizar_texto(b_padrao)
+                        m_norm = db.normalizar_texto(m_padrao)
+
+                        # 4. Mapeamento de equivalências para obter o Bairro Oficial (sempre em UPPER)
+                        if (b_norm, m_norm) in mapa_nomes_bai:
+                            b_oficial = mapa_nomes_bai[(b_norm, m_norm)].upper().strip()
+                        elif (b_norm, m_norm) in mapa_alternativos_bai:
+                            b_oficial = mapa_alternativos_bai[(b_norm, m_norm)].upper().strip()
+                            # Atualiza a chave normalizada de busca do bairro para obter a UPM correta
+                            b_norm = db.normalizar_texto(b_oficial)
+                        else:
+                            b_oficial = b_padrao
+
+                        novos_bairros.append(b_oficial)
+
+                        # 5. Determina a UPM correspondente usando a chave de bairro (oficial ou equivalente)
+                        upm_val = mapa_upms.get((b_norm, m_norm))
+                        if not upm_val:
+                            # Se não achou Bairro+Municipio, mas o Município possui apenas 'TODOS' cadastrado
+                            if m_norm in mapa_mun_todos:
+                                upm_val = mapa_mun_todos[m_norm]
+                            else:
+                                upm_val = "NI"
+
+                        if str(b_orig).strip().upper() != b_oficial:
+                            qtd_bairros_corrigidos += 1
+                        if str(m_orig).strip().upper() != m_padrao:
+                            qtd_municipios_corrigidos += 1
+                        if upm_val != "NI":
+                            qtd_upms_injetadas += 1
+
+                        lista_upms.append(upm_val)
+
+                    # Atualiza o DataFrame com as strings higienizadas e corretas
+                    df_upload[col_bairro] = novos_bairros
+                    df_upload[col_municipio] = novos_municipios
+
+                    # Cria a nova coluna UPM na primeira posição para ser facilmente visível
+                    if "UPM" in df_upload.columns:
+                        df_upload["UPM"] = lista_upms
+                    else:
+                        df_upload.insert(0, "UPM", lista_upms)
+
+                    # =========================================================
+                    # PASSO EXTRA: CLASSIFICAÇÃO INTELIGENTE (IA) TIPO LOCAL 2
+                    # =========================================================
+                    col_narrativa = next((c for c in df_upload.columns if db.normalizar_texto(c) == "narrativa"), None)
+                    col_tipo2 = next((c for c in df_upload.columns if db.normalizar_texto(c).replace(" ", "") == "tipolocal2"), None)
+
+                    if col_tipo2:
+                        df_upload[col_tipo2] = df_upload[col_tipo2].astype(object)
+
+                    st.session_state.df_upload_proc = df_upload
+                    st.session_state.qtd_bairros_corrigidos = qtd_bairros_corrigidos
+                    st.session_state.qtd_municipios_corrigidos = qtd_municipios_corrigidos
+                    st.session_state.qtd_upms_injetadas = qtd_upms_injetadas
+                    st.session_state.colunas_data_fato = colunas_data
+                    st.session_state.linhas_classificadas = 0
+                    st.session_state.linhas_mantidas = 0
+                    st.session_state.erros_ia = 0
+                    st.session_state.lista_erros_ia = []
+                    st.session_state.lista_sucesso_ia = []
+                    st.session_state.logs_ordenados = []
                 else:
-                    # Inicializa variáveis locais de estatísticas de IA com valor padrão para evitar NameError
+                    # Recupera os dados parciais da sessão
+                    df_upload = st.session_state.df_upload_proc
+                    qtd_bairros_corrigidos = st.session_state.get('qtd_bairros_corrigidos', 0)
+                    qtd_municipios_corrigidos = st.session_state.get('qtd_municipios_corrigidos', 0)
+                    qtd_upms_injetadas = st.session_state.get('qtd_upms_injetadas', 0)
+                    colunas_data = st.session_state.get('colunas_data_fato', [])
+
+                    linhas_classificadas = st.session_state.get('linhas_classificadas', 0)
+                    linhas_mantidas = st.session_state.get('linhas_mantidas', 0)
+                    erros_ia = st.session_state.get('erros_ia', 0)
+                    lista_erros_ia = st.session_state.get('lista_erros_ia', [])
+                    logs_ordenados = st.session_state.get('logs_ordenados', [])
+                    lista_sucesso_ia = st.session_state.get('lista_sucesso_ia', [])
+
+                    # Detecta as colunas de narrativa e tipo local a partir do DataFrame recuperado
+                    col_narrativa = next((c for c in df_upload.columns if db.normalizar_texto(c) == "narrativa"), None) if df_upload is not None else None
+                    col_tipo2 = next((c for c in df_upload.columns if db.normalizar_texto(c).replace(" ", "") == "tipolocal2"), None) if df_upload is not None else None
+                if st.session_state.get('processar_clicado', False) and usar_ia and col_narrativa and col_tipo2 and ia.GENAI_DISPONIVEL and ia.GCP_PROJECT_ID and db.obter_prompt_ativo("Tipo Local"):
+                    st.info("🧠 Inicializando Classificação Cognitiva de Tipo Local via IA...")
+                    tipos_validos = db.obter_set_tipos_local()
                     linhas_classificadas = 0
                     linhas_mantidas = 0
                     erros_ia = 0
                     lista_erros_ia = []
                     lista_sucesso_ia = []
-                    logs_ordenados = []
-                    
-                    if st.session_state.get('processar_clicado', False):
-                        # Obtém o cache de UPMs na memória
-                        # Obtém os caches na memória do banco de dados
-                        mapa_upms = db.obter_mapeamento_upms()
-                        mapa_nomes_mun = db.obter_mapeamento_nomes_municipios()
-                        mapa_nomes_bai = db.obter_mapeamento_nomes_bairros()
-                        mapa_alternativos_bai = db.obter_mapeamento_alternativo_bairros()
-                        mapa_mun_todos = db.obter_municipios_com_bairro_todos_unico()
-                        
-                        lista_upms = []
-                        novos_bairros = []
-                        novos_municipios = []
-                        
-                        qtd_bairros_corrigidos = 0
-                        qtd_municipios_corrigidos = 0
-                        qtd_upms_injetadas = 0
-                        
-                        for idx, row in df_upload.iterrows():
-                            b_orig = row[col_bairro]
-                            m_orig = row[col_municipio]
-                            
-                            # 1. Padroniza e corrige o Município conforme as regras do usuário (TRIM + UPPER + apelidos)
-                            m_padrao = db.padronizar_municipio(m_orig)
-                            novos_municipios.append(m_padrao)
-                            
-                            # 2. Padroniza e corrige o Bairro (TRIM + UPPER + mojibake)
-                            b_padrao = db.corrigir_mojibake(b_orig).strip().upper()
-                            
-                            # 3. Normaliza para fazer a busca no banco de dados
-                            b_norm = db.normalizar_texto(b_padrao)
-                            m_norm = db.normalizar_texto(m_padrao)
-                            
-                            # 4. Mapeamento de equivalências para obter o Bairro Oficial (sempre em UPPER)
-                            if (b_norm, m_norm) in mapa_nomes_bai:
-                                b_oficial = mapa_nomes_bai[(b_norm, m_norm)].upper().strip()
-                            elif (b_norm, m_norm) in mapa_alternativos_bai:
-                                b_oficial = mapa_alternativos_bai[(b_norm, m_norm)].upper().strip()
-                                # Atualiza a chave normalizada de busca do bairro para obter a UPM correta
-                                b_norm = db.normalizar_texto(b_oficial)
+
+                    # Filtra em memória as ocorrências que realmente precisam de classificação por IA
+                    indices_para_classificar = []
+                    for row_idx, row_data in df_upload.iterrows():
+                        valor_atual = str(row_data[col_tipo2]).strip().upper() if pd.notna(row_data[col_tipo2]) else ""
+                        if not valor_atual or valor_atual not in tipos_validos:
+                            narrativa = row_data[col_narrativa]
+                            if pd.notna(narrativa) and str(narrativa).strip():
+                                indices_para_classificar.append((row_idx, str(narrativa), valor_atual))
                             else:
-                                b_oficial = b_padrao
-                                
-                            novos_bairros.append(b_oficial)
-                            
-                            # 5. Determina a UPM correspondente usando a chave de bairro (oficial ou equivalente)
-                            upm_val = mapa_upms.get((b_norm, m_norm))
-                            if not upm_val:
-                                # Se não achou Bairro+Municipio, mas o Município possui apenas 'TODOS' cadastrado
-                                if m_norm in mapa_mun_todos:
-                                    upm_val = mapa_mun_todos[m_norm]
-                                else:
-                                    upm_val = "NI"
-                                    
-                            if str(b_orig).strip().upper() != b_oficial:
-                                qtd_bairros_corrigidos += 1
-                            if str(m_orig).strip().upper() != m_padrao:
-                                qtd_municipios_corrigidos += 1
-                            if upm_val != "NI":
-                                qtd_upms_injetadas += 1
-                                    
-                            lista_upms.append(upm_val)
-                                
-                        # Atualiza o DataFrame com as strings higienizadas e corretas
-                        df_upload[col_bairro] = novos_bairros
-                        df_upload[col_municipio] = novos_municipios
-                        
-                        # Cria a nova coluna UPM na primeira posição para ser facilmente visível
-                        if "UPM" in df_upload.columns:
-                            df_upload["UPM"] = lista_upms
+                                linhas_mantidas += 1
                         else:
-                            df_upload.insert(0, "UPM", lista_upms)
-                            
-                        # =========================================================
-                        # PASSO EXTRA: CLASSIFICAÇÃO INTELIGENTE (IA) TIPO LOCAL 2
-                        # =========================================================
-                        col_narrativa = next((c for c in df_upload.columns if db.normalizar_texto(c) == "narrativa"), None)
-                        col_tipo2 = next((c for c in df_upload.columns if db.normalizar_texto(c).replace(" ", "") == "tipolocal2"), None)
-                        
-                        if col_tipo2:
-                            df_upload[col_tipo2] = df_upload[col_tipo2].astype(object)
-                            
-                        st.session_state.df_upload_proc = df_upload
-                        st.session_state.qtd_bairros_corrigidos = qtd_bairros_corrigidos
-                        st.session_state.qtd_municipios_corrigidos = qtd_municipios_corrigidos
-                        st.session_state.qtd_upms_injetadas = qtd_upms_injetadas
-                        st.session_state.colunas_data_fato = colunas_data
-                        st.session_state.linhas_classificadas = 0
-                        st.session_state.linhas_mantidas = 0
-                        st.session_state.erros_ia = 0
-                        st.session_state.lista_erros_ia = []
-                        st.session_state.lista_sucesso_ia = []
-                        st.session_state.logs_ordenados = []
-                    else:
-                        # Recupera os dados parciais da sessão
-                        df_upload = st.session_state.df_upload_proc
-                        qtd_bairros_corrigidos = st.session_state.get('qtd_bairros_corrigidos', 0)
-                        qtd_municipios_corrigidos = st.session_state.get('qtd_municipios_corrigidos', 0)
-                        qtd_upms_injetadas = st.session_state.get('qtd_upms_injetadas', 0)
-                        colunas_data = st.session_state.get('colunas_data_fato', [])
-                        
-                        linhas_classificadas = st.session_state.get('linhas_classificadas', 0)
-                        linhas_mantidas = st.session_state.get('linhas_mantidas', 0)
-                        erros_ia = st.session_state.get('erros_ia', 0)
-                        lista_erros_ia = st.session_state.get('lista_erros_ia', [])
-                        logs_ordenados = st.session_state.get('logs_ordenados', [])
-                        lista_sucesso_ia = st.session_state.get('lista_sucesso_ia', [])
-                    if st.session_state.get('processar_clicado', False) and usar_ia and col_narrativa and col_tipo2 and ia.GENAI_DISPONIVEL and ia.GCP_PROJECT_ID and db.obter_prompt_ativo("Tipo Local"):
-                        st.info("🧠 Inicializando Classificação Cognitiva de Tipo Local via IA...")
-                        tipos_validos = db.obter_set_tipos_local()
-                        linhas_classificadas = 0
-                        linhas_mantidas = 0
-                        erros_ia = 0
-                        lista_erros_ia = []
-                        lista_sucesso_ia = []
-                        
-                        # Filtra em memória as ocorrências que realmente precisam de classificação por IA
-                        indices_para_classificar = []
-                        for row_idx, row_data in df_upload.iterrows():
-                            valor_atual = str(row_data[col_tipo2]).strip().upper() if pd.notna(row_data[col_tipo2]) else ""
-                            if not valor_atual or valor_atual not in tipos_validos:
-                                narrativa = row_data[col_narrativa]
-                                if pd.notna(narrativa) and str(narrativa).strip():
-                                    indices_para_classificar.append((row_idx, str(narrativa), valor_atual))
-                                else:
-                                    linhas_mantidas += 1
-                            else:
-                                    linhas_mantidas += 1
-                                    
-                        total_tarefas = len(indices_para_classificar)
-                        
-                        if total_tarefas > 0:
-                            import concurrent.futures
-                            # 15 workers concorrentes para alta performance aproveitando as cotas do GCP
-                            max_workers = 15
-                            
-                            status_text = st.empty()
-                            progress_bar = st.progress(0)
-                            log_container = st.empty()
-                            
-                            # Lista ordenada que guardará o log na posição exata da ocorrência (1-based index)
-                            logs_ordenados = [None] * total_tarefas
-                            
-                            with log_container.container():
-                                with st.expander("📊 Log ao vivo das classificações da IA (Progresso Cronológico)", expanded=True):
-                                    st.info("⏳ Inicializando chamadas paralelas à Inteligência Artificial...")
-                            
-                            # Função auxiliar executada de forma assíncrona nas threads filhas
-                            def processar_linha_ia(row_idx, narrativa, valor_atual, num_tarefa):
-                                texto_seguro = ia.anonimizar_texto(narrativa)
-                                msg_log_inicio = f"🔒 Narrativa Anonimizada (Ocorrência {num_tarefa}): {texto_seguro}"
-                                
-                                def callback_silencioso(msg):
-                                    pass
-                                    
-                                novo_tipo = ia.classificar("Tipo Local", narrativa, log_callback=callback_silencioso)
-                                return row_idx, novo_tipo, valor_atual, msg_log_inicio, num_tarefa
-                            
-                            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                                # Submete as tarefas ao pool
-                                futuros = {
-                                    executor.submit(processar_linha_ia, r_idx, narr, val_at, i + 1): r_idx
-                                    for i, (r_idx, narr, val_at) in enumerate(indices_para_classificar)
-                                }
-                                
-                                finalizados = 0
-                                for futuro in concurrent.futures.as_completed(futuros):
-                                    # Se o usuário clicou para interromper, pára o processamento na thread principal
-                                    if st.session_state.get('interromper', False):
-                                        st.warning("⚠️ Processamento de Inteligência Artificial interrompido pelo usuário!")
-                                        executor.shutdown(wait=False, cancel_futures=True)
-                                        break
-                                        
-                                    try:
-                                        row_idx, novo_tipo, valor_atual, msg_log_inicio, num_tarefa = futuro.result()
-                                        
-                                        msg_final = ""
-                                        if novo_tipo.startswith("ERRO_"):
-                                            erros_ia += 1
-                                            lista_erros_ia.append(f"Ocorrência {num_tarefa}: {novo_tipo}")
-                                            msg_final = f"🔒 Ocorrência {num_tarefa} ({ia.anonimizar_texto(df_upload.at[row_idx, col_narrativa])[:50]}...): Erro na análise ({novo_tipo})"
-                                        elif novo_tipo == "NI":
-                                            linhas_mantidas += 1
-                                            msg_final = f"🔒 Ocorrência {num_tarefa}: Mantido [ {valor_atual if valor_atual else 'VAZIO'} ] -> A IA retornou NI (Não Identificado)"
-                                        else:
-                                            df_upload.at[row_idx, col_tipo2] = novo_tipo
-                                            linhas_classificadas += 1
-                                            msg_final = f"🔒 Ocorrência {num_tarefa}: Reclassificado de [ {valor_atual if valor_atual else 'VAZIO'} ] para -> [ {novo_tipo} ]"
-                                            
-                                        # Armazena na posição correspondente para o log final ordenado
-                                        logs_ordenados[num_tarefa - 1] = msg_final
-                                        
-                                        # Coloca na lista cronológica de log ao vivo para manter o fluxo coerente sem pular números
-                                        lista_sucesso_ia.append(msg_final)
-                                        
-                                        # Sincroniza em tempo real com o session_state para salvar progresso parcial em caso de cancelamento
-                                        st.session_state.df_upload_proc = df_upload
-                                        st.session_state.linhas_classificadas = linhas_classificadas
-                                        st.session_state.linhas_mantidas = linhas_mantidas
-                                        st.session_state.erros_ia = erros_ia
-                                        st.session_state.lista_erros_ia = lista_erros_ia
-                                        st.session_state.lista_sucesso_ia = lista_sucesso_ia
-                                        st.session_state.logs_ordenados = logs_ordenados
-                                        
-                                    except Exception as e:
+                                linhas_mantidas += 1
+
+                    total_tarefas = len(indices_para_classificar)
+
+                    if total_tarefas > 0:
+                        import concurrent.futures
+                        # 15 workers concorrentes para alta performance aproveitando as cotas do GCP
+                        max_workers = 15
+
+                        status_text = st.empty()
+                        progress_bar = st.progress(0)
+                        log_container = st.empty()
+
+                        # Lista ordenada que guardará o log na posição exata da ocorrência (1-based index)
+                        logs_ordenados = [None] * total_tarefas
+
+                        with log_container.container():
+                            with st.expander("📊 Log ao vivo das classificações da IA (Progresso Cronológico)", expanded=True):
+                                st.info("⏳ Inicializando chamadas paralelas à Inteligência Artificial...")
+
+                        # Função auxiliar executada de forma assíncrona nas threads filhas
+                        def processar_linha_ia(row_idx, narrativa, valor_atual, num_tarefa):
+                            texto_seguro = ia.anonimizar_texto(narrativa)
+                            msg_log_inicio = f"🔒 Narrativa Anonimizada (Ocorrência {num_tarefa}): {texto_seguro}"
+
+                            def callback_silencioso(msg):
+                                pass
+
+                            novo_tipo = ia.classificar("Tipo Local", narrativa, log_callback=callback_silencioso)
+                            return row_idx, novo_tipo, valor_atual, msg_log_inicio, num_tarefa
+
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                            # Submete as tarefas ao pool
+                            futuros = {
+                                executor.submit(processar_linha_ia, r_idx, narr, val_at, i + 1): r_idx
+                                for i, (r_idx, narr, val_at) in enumerate(indices_para_classificar)
+                            }
+
+                            finalizados = 0
+                            for futuro in concurrent.futures.as_completed(futuros):
+                                # Se o usuário clicou para interromper, pára o processamento na thread principal
+                                if st.session_state.get('interromper', False):
+                                    st.warning("⚠️ Processamento de Inteligência Artificial interrompido pelo usuário!")
+                                    executor.shutdown(wait=False, cancel_futures=True)
+                                    break
+
+                                try:
+                                    row_idx, novo_tipo, valor_atual, msg_log_inicio, num_tarefa = futuro.result()
+
+                                    msg_final = ""
+                                    if novo_tipo.startswith("ERRO_"):
                                         erros_ia += 1
-                                        lista_erros_ia.append(f"Erro ao processar ocorrência: {str(e)}")
-                                        
-                                    finalizados += 1
-                                    progress_bar.progress(finalizados / total_tarefas)
-                                    status_text.text(f"Processadas {finalizados} de {total_tarefas} ocorrências...")
-                                    
-                                    # Exibe os logs ao vivo em ordem cronológica de finalização das requisições (sem pular ou sumir)
-                                    with log_container.container():
-                                        with st.expander("📊 Log ao vivo das classificações da IA (Progresso Cronológico)", expanded=True):
-                                            for msg in lista_sucesso_ia[-10:]: # Mostra os últimos 10 processados cronologicamente
-                                                if "Reclassificado" in msg:
-                                                    st.success(msg)
-                                                elif "Erro" in msg or "ERRO" in msg:
-                                                    st.error(msg)
-                                                else:
-                                                    st.warning(msg)
-                                                        
-                            status_text.empty()
-                            progress_bar.empty()
-                            
-                            # Renderiza o log final completo ordenado e fechado
-                            logs_validos_finais = [msg for msg in logs_ordenados if msg is not None]
-                            if logs_validos_finais:
+                                        lista_erros_ia.append(f"Ocorrência {num_tarefa}: {novo_tipo}")
+                                        msg_final = f"🔒 Ocorrência {num_tarefa} ({ia.anonimizar_texto(df_upload.at[row_idx, col_narrativa])[:50]}...): Erro na análise ({novo_tipo})"
+                                    elif novo_tipo == "NI":
+                                        linhas_mantidas += 1
+                                        msg_final = f"🔒 Ocorrência {num_tarefa}: Mantido [ {valor_atual if valor_atual else 'VAZIO'} ] -> A IA retornou NI (Não Identificado)"
+                                    else:
+                                        df_upload.at[row_idx, col_tipo2] = novo_tipo
+                                        linhas_classificadas += 1
+                                        msg_final = f"🔒 Ocorrência {num_tarefa}: Reclassificado de [ {valor_atual if valor_atual else 'VAZIO'} ] para -> [ {novo_tipo} ]"
+
+                                    # Armazena na posição correspondente para o log final ordenado
+                                    logs_ordenados[num_tarefa - 1] = msg_final
+
+                                    # Coloca na lista cronológica de log ao vivo para manter o fluxo coerente sem pular números
+                                    lista_sucesso_ia.append(msg_final)
+
+                                    # Sincroniza em tempo real com o session_state para salvar progresso parcial em caso de cancelamento
+                                    st.session_state.df_upload_proc = df_upload
+                                    st.session_state.linhas_classificadas = linhas_classificadas
+                                    st.session_state.linhas_mantidas = linhas_mantidas
+                                    st.session_state.erros_ia = erros_ia
+                                    st.session_state.lista_erros_ia = lista_erros_ia
+                                    st.session_state.lista_sucesso_ia = lista_sucesso_ia
+                                    st.session_state.logs_ordenados = logs_ordenados
+
+                                except Exception as e:
+                                    erros_ia += 1
+                                    lista_erros_ia.append(f"Erro ao processar ocorrência: {str(e)}")
+
+                                finalizados += 1
+                                progress_bar.progress(finalizados / total_tarefas)
+                                status_text.text(f"Processadas {finalizados} de {total_tarefas} ocorrências...")
+
+                                # Exibe os logs ao vivo em ordem cronológica de finalização das requisições (sem pular ou sumir)
                                 with log_container.container():
-                                    with st.expander("📊 Ver log detalhado das classificações da IA (Ordenado)", expanded=False):
-                                        for msg in logs_validos_finais:
+                                    with st.expander("📊 Log ao vivo das classificações da IA (Progresso Cronológico)", expanded=True):
+                                        for msg in lista_sucesso_ia[-10:]: # Mostra os últimos 10 processados cronologicamente
                                             if "Reclassificado" in msg:
                                                 st.success(msg)
                                             elif "Erro" in msg or "ERRO" in msg:
                                                 st.error(msg)
                                             else:
                                                 st.warning(msg)
-                                                
-                            if lista_erros_ia:
-                                with st.expander("🚨 Ver detalhes dos erros da IA"):
-                                    for erro_msg in lista_erros_ia:
-                                        st.error(erro_msg)
-                                    
-                    elif col_narrativa and col_tipo2:
-                        motivos_falta = []
-                        if not ia.GENAI_DISPONIVEL:
-                            motivos_falta.append("Pacote do Gemini não instalado")
-                        if not ia.GCP_PROJECT_ID:
-                            motivos_falta.append("ID do Projeto GCP não configurado no arquivo .env")
-                        if not db.obter_prompt_ativo("Tipo Local"):
-                            motivos_falta.append("Prompt para 'Tipo Local' não cadastrado ou inativo no sistema")
-                            
-                        st.warning(f"⚠️ Colunas para IA encontradas, mas a classificação foi pulada. Motivos: {', '.join(motivos_falta)}.")
 
-                    # Concluiu o processamento, desativa o flag para evitar re-execuções reativas indesejadas
-                    st.session_state.processar_clicado = False
-                    
+                        status_text.empty()
+                        progress_bar.empty()
+
+                        # Renderiza o log final completo ordenado e fechado
+                        logs_validos_finais = [msg for msg in logs_ordenados if msg is not None]
+                        if logs_validos_finais:
+                            with log_container.container():
+                                with st.expander("📊 Ver log detalhado das classificações da IA (Ordenado)", expanded=False):
+                                    for msg in logs_validos_finais:
+                                        if "Reclassificado" in msg:
+                                            st.success(msg)
+                                        elif "Erro" in msg or "ERRO" in msg:
+                                            st.error(msg)
+                                        else:
+                                            st.warning(msg)
+
+                        if lista_erros_ia:
+                            with st.expander("🚨 Ver detalhes dos erros da IA"):
+                                for erro_msg in lista_erros_ia:
+                                    st.error(erro_msg)
+
+                elif col_narrativa and col_tipo2:
+                    motivos_falta = []
+                    if not ia.GENAI_DISPONIVEL:
+                        motivos_falta.append("Pacote do Gemini não instalado")
+                    if not ia.GCP_PROJECT_ID:
+                        motivos_falta.append("ID do Projeto GCP não configurado no arquivo .env")
+                    if not db.obter_prompt_ativo("Tipo Local"):
+                        motivos_falta.append("Prompt para 'Tipo Local' não cadastrado ou inativo no sistema")
+
+                    st.warning(f"⚠️ Colunas para IA encontradas, mas a classificação foi pulada. Motivos: {', '.join(motivos_falta)}.")
+
+                # Concluiu o processamento, desativa o flag para evitar re-execuções reativas indesejadas
+                st.session_state.processar_clicado = False
+
+                # Envelopa toda a exibição dos resultados e prévia no container vazio do placeholder_resultados
+                with placeholder_resultados.container():
                     # Mensagem de conclusão compacta e organizada
                     if st.session_state.get('interromper', False):
                         st.warning("⚠️ Processamento Parcial: IA interrompida pelo usuário. Abaixo estão disponíveis os dados analisados até a interrupção.")
                     else:
                         st.success("🎉 Processamento Concluído com Sucesso!")
                     qtd_upms_ni = len(df_upload) - qtd_upms_injetadas
-                    
+
                     st.info(f"🎯 **Tratamento (Bairros e Municípios):** {len(df_upload)} linhas | {qtd_municipios_corrigidos} Municípios Higienizados | {qtd_bairros_corrigidos} Bairros Corrigidos | {qtd_upms_injetadas} UPMs Injetadas | {qtd_upms_ni} UPMs 'NI'")
-                    
+
                     if col_narrativa and col_tipo2 and ia.GENAI_DISPONIVEL:
                         st.info(f"🧠 **Classificação por Inteligência Artificial:** {linhas_classificadas} Reclassificações | {linhas_mantidas} Mantidos (Sem Alteração) | {erros_ia} Erros")
-                    
+
                     st.subheader("Prévia dos Dados Processados")
                     # Exibe no Streamlit apenas as primeiras 100 linhas como prévia para performance
                     linhas_prev = min(100, len(df_upload))
                     st.write(f"Mostrando as primeiras {linhas_prev} de {len(df_upload)} linhas processadas:")
-                    
+
                     df_preview = df_upload.head(linhas_prev).copy()
                     df_preview.index = range(1, len(df_preview) + 1)
-                    
+
                     # Formata colunas de data como DD/MM/AAAA para exibição na grid
                     for col_dt in colunas_data:
                         if col_dt in df_preview.columns:
                             df_preview[col_dt] = df_preview[col_dt].apply(
                                 lambda v: v.strftime('%d/%m/%Y') if isinstance(v, (pd.Timestamp, datetime)) else v
                             )
-                    
+
                     st.dataframe(df_preview, width="stretch")
-                    
+
                     # Cria o arquivo Excel em memória para download
                     import io
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine='openpyxl', datetime_format='dd/mm/yyyy') as writer:
                         df_upload.to_excel(writer, index=False, sheet_name='Dados_Processados')
-                        
+
                         # Aplica formato dd/mm/yyyy nas colunas de data detectadas
                         colunas_data_exp = st.session_state.get('colunas_data_detectadas', [])
                         if colunas_data_exp:
@@ -2638,7 +2658,7 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                         if col_comparar == "datafato":
                             col_data_fato = col
                             break
-                    
+
                     if col_data_fato:
                         # Converte para datetime garantindo o padrão brasileiro (dia primeiro)
                         datas_validas = pd.to_datetime(df_upload[col_data_fato], dayfirst=True, errors='coerce').dropna()
@@ -2646,9 +2666,9 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                             data_min = datas_validas.min().strftime('%d-%m-%Y')
                             data_max = datas_validas.max().strftime('%d-%m-%Y')
                             nome_arquivo = f"ROUBO E FURTO {data_min} A {data_max} - EXPORT.xlsx"
-                            
+
                     processed_data = buffer.getvalue()
-                    
+
                     st.write("")
                     st.download_button(
                         label="📥 Baixar Planilha com Coluna UPM (.xlsx)",
@@ -2657,9 +2677,9 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         width="stretch"
                     )
-                
-        except Exception as e:
-            st.error(f"⚠️ Erro ao ler ou processar o arquivo: {str(e)}")
+
+    except Exception as e:
+        st.error(f"⚠️ Erro ao ler ou processar o arquivo: {str(e)}")
     else:
         st.info("💡 Dica: Prepare uma planilha contendo as colunas 'Bairro' e 'Municipio' para cruzar com o banco de dados do sistema.")
 
