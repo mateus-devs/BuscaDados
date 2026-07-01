@@ -2504,105 +2504,103 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                             for i, (r_idx, narr, val_at) in enumerate(indices_para_classificar)
                         ]
                         
-                        TAMANHO_LOTE = 50
+                        TAMANHO_LOTE = 15
                         lotes = []
                         for i in range(0, len(tarefas_estruturadas), TAMANHO_LOTE):
                             num_lote = (i // TAMANHO_LOTE) + 1
                             lotes.append((num_lote, tarefas_estruturadas[i:i + TAMANHO_LOTE]))
-
-                        # Função auxiliar executada de forma assíncrona nas threads filhas processando 1 LOTE inteiro
-                        def processar_lote_ia(num_lote, lote_dados):
-                            import time
-                            from datetime import datetime
-                            t0 = time.time()
-                            hora_ini = datetime.now().strftime("%H:%M:%S")
-
-                            itens_ia = [(num_tarefa, narr) for num_tarefa, r_idx, narr, val_at in lote_dados]
-
-                            def callback_silencioso(msg):
-                                pass
-
-                            retornos_lote = ia.classificar_em_lote("Tipo Local", itens_ia, log_callback=callback_silencioso)
-                            
-                            t1 = time.time()
-                            hora_fim = datetime.now().strftime("%H:%M:%S")
-                            info_tempo = f"[{hora_ini} -> {hora_fim} | {round(t1 - t0, 1)}s]"
-                            
-                            return num_lote, lote_dados, retornos_lote, info_tempo
 
                         import time
                         from datetime import datetime
                         tempo_inicio_geral = time.time()
                         hora_inicio_geral = datetime.now().strftime("%H:%M:%S")
 
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                            # Submete os lotes ao pool
-                            futuros = {
-                                executor.submit(processar_lote_ia, n_lote, l_dados): n_lote
-                                for n_lote, l_dados in lotes
-                            }
+                        status_text.info(f"🚀 Total de {len(lotes)} lotes gerados. A Inteligência Artificial vai processar 1 lote por vez. Aguarde...")
 
-                            finalizados = 0
-                            for futuro in concurrent.futures.as_completed(futuros):
-                                if st.session_state.get('interromper', False):
-                                    st.warning("⚠️ Processamento de Inteligência Artificial interrompido pelo usuário!")
-                                    executor.shutdown(wait=False, cancel_futures=True)
-                                    break
+                        finalizados = 0
+                        
+                        # Processamento estritamente sequencial (Batching Seguro)
+                        for n_lote, l_dados in lotes:
+                            if st.session_state.get('interromper', False):
+                                st.warning("⚠️ Processamento de Inteligência Artificial interrompido pelo usuário!")
+                                break
+                                
+                            hora_agora = datetime.now().strftime("%H:%M:%S")
+                            with log_container.container():
+                                st.info(f"📡 [{hora_agora}] Iniciando processamento do Lote {n_lote} ({len(l_dados)} ocorrências)...")
 
-                                try:
-                                    num_lote, lote_dados, retornos_lote, info_tempo = futuro.result()
+                            t0 = time.time()
+                            hora_ini = datetime.now().strftime("%H:%M:%S")
+                            itens_ia = [(num_tarefa, narr) for num_tarefa, r_idx, narr, val_at in l_dados]
+                            
+                            def callback_silencioso(msg):
+                                pass
 
-                                    for num_tarefa, row_idx, narrativa, valor_atual in lote_dados:
-                                        novo_tipo = retornos_lote.get(num_tarefa, "ERRO_IA_OMITIU_ITEM")
+                            try:
+                                retornos_lote = ia.classificar_em_lote("Tipo Local", itens_ia, log_callback=callback_silencioso)
+                                
+                                t1 = time.time()
+                                hora_fim = datetime.now().strftime("%H:%M:%S")
+                                info_tempo = f"[{hora_ini} -> {hora_fim} | {round(t1 - t0, 1)}s]"
+                                
+                                for num_tarefa, row_idx, narrativa, valor_atual in l_dados:
+                                    novo_tipo = retornos_lote.get(num_tarefa, "ERRO_IA_OMITIU_ITEM")
 
-                                        msg_final = ""
-                                        if novo_tipo.startswith("ERRO_"):
-                                            erros_ia += 1
-                                            lista_erros_ia.append(f"Ocorrência {num_tarefa}: {novo_tipo}")
-                                            msg_final = f"🔒 {info_tempo} Lote {num_lote} - Ocorrência {num_tarefa} ({ia.anonimizar_texto(df_upload.at[row_idx, col_narrativa])[:30]}...): Erro ({novo_tipo})"
-                                        elif novo_tipo == "NI":
-                                            linhas_mantidas += 1
-                                            msg_final = f"🔒 {info_tempo} Lote {num_lote} - Ocorrência {num_tarefa}: Mantido [ {valor_atual if valor_atual else 'VAZIO'} ] -> A IA retornou NI (Não Identificado)"
-                                        else:
-                                            df_upload.at[row_idx, col_tipo2] = novo_tipo
-                                            linhas_classificadas += 1
-                                            msg_final = f"🔒 {info_tempo} Lote {num_lote} - Ocorrência {num_tarefa}: Reclassificado de [ {valor_atual if valor_atual else 'VAZIO'} ] para -> [ {novo_tipo} ]"
-
-                                        logs_ordenados[num_tarefa - 1] = msg_final
-                                        lista_sucesso_ia.append(msg_final)
-
-                                    # Sincroniza em tempo real com o session_state para salvar progresso parcial
-                                    st.session_state.df_upload_proc = df_upload
-                                    st.session_state.linhas_classificadas = linhas_classificadas
-                                    st.session_state.linhas_mantidas = linhas_mantidas
-                                    st.session_state.erros_ia = erros_ia
-                                    st.session_state.lista_erros_ia = lista_erros_ia
-                                    st.session_state.lista_sucesso_ia = lista_sucesso_ia
-                                    st.session_state.logs_ordenados = logs_ordenados
-
-                                except Exception as e:
-                                    num_lote_erro = futuros[futuro]
-                                    # Se todo o lote explodir (exemplo de request exception)
-                                    for num_tarefa_erro, row_idx_erro, _, _ in [l for n, l in lotes if n == num_lote_erro][0]:
+                                    msg_final = ""
+                                    if novo_tipo.startswith("ERRO_"):
                                         erros_ia += 1
-                                        lista_erros_ia.append(f"Erro Fatal no Lote {num_lote_erro}: Ocorrência {num_tarefa_erro} ignorada ({str(e)})")
+                                        lista_erros_ia.append(f"Ocorrência {num_tarefa}: {novo_tipo}")
+                                        msg_final = f"🔒 {info_tempo} Lote {n_lote} - Ocorrência {num_tarefa} ({ia.anonimizar_texto(df_upload.at[row_idx, col_narrativa])[:30]}...): Erro ({novo_tipo})"
+                                    elif novo_tipo == "NI":
+                                        linhas_mantidas += 1
+                                        msg_final = f"🔒 {info_tempo} Lote {n_lote} - Ocorrência {num_tarefa}: Mantido [ {valor_atual if valor_atual else 'VAZIO'} ] -> A IA retornou NI (Não Identificado)"
+                                    else:
+                                        df_upload.at[row_idx, col_tipo2] = novo_tipo
+                                        linhas_classificadas += 1
+                                        msg_final = f"🔒 {info_tempo} Lote {n_lote} - Ocorrência {num_tarefa}: Reclassificado de [ {valor_atual if valor_atual else 'VAZIO'} ] para -> [ {novo_tipo} ]"
 
-                                finalizados += len(lote_dados) if 'lote_dados' in locals() else TAMANHO_LOTE
-                                if finalizados > total_tarefas:
-                                    finalizados = total_tarefas
-                                progress_bar.progress(finalizados / total_tarefas)
-                                status_text.text(f"Processadas {finalizados} de {total_tarefas} ocorrências...")
+                                    logs_ordenados[num_tarefa - 1] = msg_final
+                                    lista_sucesso_ia.append(msg_final)
 
-                                # Exibe os logs ao vivo em ordem cronológica de finalização das requisições (sem pular ou sumir)
-                                with log_container.container():
-                                    with st.expander("📊 Log ao vivo das classificações da IA (Progresso Cronológico)", expanded=True):
-                                        for msg in lista_sucesso_ia[-10:]: # Mostra os últimos 10 processados cronologicamente
-                                            if "Reclassificado" in msg:
-                                                st.success(msg)
-                                            elif "Erro" in msg or "ERRO" in msg:
-                                                st.error(msg)
-                                            else:
-                                                st.warning(msg)
+                                # Sincroniza em tempo real com o session_state para salvar progresso parcial
+                                st.session_state.df_upload_proc = df_upload
+                                st.session_state.linhas_classificadas = linhas_classificadas
+                                st.session_state.linhas_mantidas = linhas_mantidas
+                                st.session_state.erros_ia = erros_ia
+                                st.session_state.lista_erros_ia = lista_erros_ia
+                                st.session_state.lista_sucesso_ia = lista_sucesso_ia
+                                st.session_state.logs_ordenados = logs_ordenados
+                                
+                                # Checkpointing Incremental (Salvar CSV local)
+                                try:
+                                    df_upload.to_csv("backup_incremental_ia.csv", index=False, encoding="utf-8-sig", sep=";")
+                                except Exception as e:
+                                    st.warning(f"⚠️ Erro ao salvar checkpoint incremental: {str(e)}")
+                                
+                                # Pausa de segurança após um sucesso no lote
+                                time.sleep(3)
+
+                            except Exception as e:
+                                for num_tarefa_erro, row_idx_erro, _, _ in l_dados:
+                                    erros_ia += 1
+                                    lista_erros_ia.append(f"Erro Fatal no Lote {n_lote}: Ocorrência {num_tarefa_erro} ignorada ({str(e)})")
+
+                            finalizados += len(l_dados)
+                            if finalizados > total_tarefas:
+                                finalizados = total_tarefas
+                            progress_bar.progress(finalizados / total_tarefas)
+                            status_text.info(f"⚡ Lote {n_lote} finalizado! Processadas {finalizados} de {total_tarefas} ocorrências pela Inteligência Artificial. Aguardando próximos...")
+
+                            # Exibe os logs ao vivo em ordem cronológica de finalização
+                            with log_container.container():
+                                with st.expander("📊 Log ao vivo das classificações da IA (Progresso Cronológico)", expanded=True):
+                                    for msg in lista_sucesso_ia[-10:]:
+                                        if "Reclassificado" in msg:
+                                            st.success(msg)
+                                        elif "Erro" in msg or "ERRO" in msg:
+                                            st.error(msg)
+                                        else:
+                                            st.warning(msg)
 
                         status_text.empty()
                         progress_bar.empty()

@@ -124,7 +124,7 @@ def obter_categorias_formatadas(tipo: str) -> tuple[str, dict]:
     return categorias_str, categorias_validas
 
 def classificar_com_retry(prompt: str, max_retries: int = 5, log_callback=None) -> str:
-    """Envia o prompt para a API do Gemini com lógica de retry em caso de Rate Limit (429) e Jitter"""
+    """Envia o prompt para a API do Gemini com lógica de retry, tratando Timeout, 429, 500 e 503."""
     import random
     client = get_gemini_client()
     
@@ -135,7 +135,6 @@ def classificar_com_retry(prompt: str, max_retries: int = 5, log_callback=None) 
         try:
             # Em chamadas de classificação simples sem temperatura alta, reduzimos um pouco a temperatura 
             # para respostas mais consistentes
-            # Envia a requisição usando o novo SDK client.models.generate_content
             response = client.models.generate_content(
                 model=GEMINI_MODEL_NAME,
                 contents=prompt,
@@ -149,20 +148,26 @@ def classificar_com_retry(prompt: str, max_retries: int = 5, log_callback=None) 
             return response.text.strip().upper()
             
         except Exception as e:
-            err_str = str(e)
-            if "429" in err_str or "Quota" in err_str or "ResourceExhausted" in err_str:
-                espera = (15 * (1.5 ** tentativa)) + random.uniform(1, 5) # Backoff com Jitter
-                espera_arredondada = round(espera, 1)
-                msg = f"⏳ Limite atingido. Pausando por {espera_arredondada} segundos para evitar bloqueio..."
+            err_str = str(e).lower()
+            # Captura os erros especificados pelo usuário: 429, 500, 503, timeout
+            termos_instabilidade = ["429", "500", "503", "quota", "resourceexhausted", "timeout", "deadline"]
+            if any(term in err_str for term in termos_instabilidade):
+                # Exponential backoff base 2 iniciando em 2s (2, 4, 8, 16, 32...)
+                espera = 2 ** (tentativa + 1)
+                msg = f"⏳ Falha de conexão ou Rate Limit (Erro). Pausando por {espera}s (Tentativa {tentativa+1}/{max_retries})..."
                 logger.warning(msg)
                 if log_callback:
                     log_callback(msg)
                 time.sleep(espera)
             else:
-                logger.error(f"Erro na API do Gemini: {err_str}")
-                return f"ERRO_API: {err_str}"
+                logger.error(f"Erro desconhecido na API do Gemini: {err_str}")
+                return f"ERRO_API: {str(e)}"
                 
-    return "ERRO_RATE_LIMIT"
+    msg_falha_final = f"ERRO_TENTATIVAS_ESGOTADAS: O lote falhou seguidamente após {max_retries} tentativas."
+    logger.error(msg_falha_final)
+    if log_callback:
+        log_callback(f"❌ {msg_falha_final}")
+    return "ERRO_MAX_RETRIES"
 
 def classificar(tipo: str, texto: str, log_callback=None) -> str:
     """
