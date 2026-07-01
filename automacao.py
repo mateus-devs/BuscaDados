@@ -274,10 +274,8 @@ def consultar_e_baixar_srop(
         url_consulta_formatada = url_consulta_formatada.replace("?&", "?")
         url_consulta_formatada = url_consulta_formatada.rstrip("&").rstrip("?")
         
-        # Exibe a URL gerada no console de comando e no status do Streamlit
-        print(f"\n[LOG SROP] URL de Consulta Montada: {url_consulta_formatada}\n")
+        print("[LOG SROP] Iniciando verificacao de sessao e consulta de Boletins...")
         if status_callback:
-            status_callback(f"URL de Consulta: {url_consulta_formatada}")
             status_callback("Verificando sessão e consultando Boletins de Ocorrência...")
             
         # Prepara os headers com o token Bearer caso tenha sido capturado
@@ -323,7 +321,9 @@ def consultar_e_baixar_srop(
         total_bo = len(bo_numeros)
         
         if status_callback:
-            status_callback(f"Encontrado(s) {total_bo} boletim(s) de ocorrência. Iniciando downloads...")
+            msg = f"Encontrado(s) {total_bo} boletim(s) de ocorrência. Iniciando downloads..."
+            print(f"[LOG SROP] {msg}")
+            status_callback(msg)
             
         # Cria a pasta temporária de downloads se não existir
         os.makedirs(temp_dir, exist_ok=True)
@@ -332,7 +332,9 @@ def consultar_e_baixar_srop(
         for idx, numero in enumerate(bo_numeros):
             pdf_url = url_pdf_template.replace("{numero}", numero)
             if status_callback:
-                status_callback(f"Baixando PDF {idx+1}/{total_bo} (BO: {numero})...")
+                msg = f"Baixando PDF {idx+1}/{total_bo} (BO: {numero})..."
+                print(f"[LOG SROP] {msg}")
+                status_callback(msg)
                 
             try:
                 pdf_response = context.request.get(pdf_url, headers=headers)
@@ -341,12 +343,17 @@ def consultar_e_baixar_srop(
                     with open(dest_path, "wb") as f:
                         f.write(pdf_response.body())
                     pdf_paths.append(dest_path)
+                    print(f"[LOG SROP] PDF do BO {numero} baixado com sucesso.")
                 else:
+                    msg = f"⚠️ Alerta: Falha ao baixar PDF do BO {numero} (HTTP {pdf_response.status})"
+                    print(f"[LOG SROP] {msg}")
                     if status_callback:
-                        status_callback(f"⚠️ Alerta: Falha ao baixar PDF do BO {numero} (HTTP {pdf_response.status})")
+                        status_callback(msg)
             except Exception as e:
+                msg = f"⚠️ Alerta: Erro ao baixar PDF do BO {numero}: {str(e)}"
+                print(f"[LOG SROP] {msg}")
                 if status_callback:
-                    status_callback(f"⚠️ Alerta: Erro ao baixar PDF do BO {numero}: {str(e)}")
+                    status_callback(msg)
                     
         # Fechar navegador
         browser.close()

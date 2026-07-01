@@ -1716,10 +1716,16 @@ elif menu == "📄 Manutenção de Layouts":
                             st.rerun()
                         st.write("")
                     else:
-                        _, col_edt_g, col_del_g = st.columns([6, 1.5, 2.5])
+                        _, col_edt_g, col_reset_g, col_del_g = st.columns([4.5, 1.5, 2.0, 2.0])
                         if col_edt_g.button("✏️ Editar Grupo", key=f"edt_g_{grupo_id}", use_container_width=True):
                             st.session_state[f"edit_g_{grupo_id}"] = True
                             st.rerun()
+                        if col_reset_g.button("🔄 Resetar Ordenação", key=f"reset_g_{grupo_id}", use_container_width=True, help="Reseta os valores de ordenação de todos os itens do grupo para 1"):
+                            if db.resetar_ordenacao_grupo(grupo_id):
+                                st.success("Ordenação resetada com sucesso!")
+                                st.rerun()
+                            else:
+                                st.error("Erro ao resetar ordenação do grupo.")
                         if col_del_g.button(f"🗑️ Excluir Grupo Inteiro", key=f"del_g_{grupo_id}", use_container_width=True):
                             db.excluir_grupo(grupo_id)
                             st.rerun()
@@ -1853,6 +1859,16 @@ elif menu == "📄 Manutenção de Layouts":
                 WHERE Layout_ID = %s AND Tem_Itens = 0 AND Exportar_Excel = 1
             """, (l_id,))
             grupos_db = cursor_prv.fetchall()
+            
+            # 3. Busca se existem itens de metadados especiais mapeados no banco (ativos ou não) para evitar fallback indevido
+            cursor_prv.execute("""
+                SELECT i.Palavra_Busca 
+                FROM layout_itens i 
+                JOIN layout_grupos g ON i.Grupo_ID = g.ID 
+                WHERE g.Layout_ID = %s 
+                  AND i.Palavra_Busca IN ('*ARQUIVO*', '*BO_NUMERO*', '*DATA_DO_REGISTRO*', '*HORA_DO_REGISTRO*')
+            """, (l_id,))
+            especiais_mapeados = [r[0] for r in cursor_prv.fetchall()]
             conn_prv.close()
             
             colunas_candidatas = []
@@ -1860,6 +1876,7 @@ elif menu == "📄 Manutenção de Layouts":
             for nome, ordem_e, palavra, iid in itens_db:
                 colunas_candidatas.append({
                     "nome": ex_bo.normalizar_nome_chave(nome),
+                    "nome_original": nome,
                     "ordem_excel": ordem_e,
                     "palavra": palavra,
                     "id": iid
@@ -1867,6 +1884,7 @@ elif menu == "📄 Manutenção de Layouts":
             for nome, ordem_e, palavra, iid in grupos_db:
                 colunas_candidatas.append({
                     "nome": ex_bo.normalizar_nome_chave(nome),
+                    "nome_original": nome,
                     "ordem_excel": ordem_e,
                     "palavra": palavra,
                     "id": iid
@@ -1874,25 +1892,34 @@ elif menu == "📄 Manutenção de Layouts":
                 
             # Ordena pelo Ordem_Excel (crescente) e pelo ID (estável)
             colunas_candidatas.sort(key=lambda x: (x["ordem_excel"], x["id"]))
-            db_keywords = [c["palavra"] for c in colunas_candidatas]
             
+            mapeamento_exibicao = {}
+            for c in colunas_candidatas:
+                mapeamento_exibicao[c["nome"]] = c["nome_original"]
+                
             headers = []
-            # Adiciona metadados estáticos antigos apenas como fallback se não estiverem mapeados no banco
-            if "*ARQUIVO*" not in db_keywords:
+            # Adiciona metadados estáticos antigos apenas como fallback se não estiverem mapeados de forma alguma no banco (ativos ou inativos)
+            if "*ARQUIVO*" not in especiais_mapeados:
                 headers.append("ARQUIVO")
-            if "*BO_NUMERO*" not in db_keywords:
+                mapeamento_exibicao["ARQUIVO"] = "ARQUIVO"
+            if "*BO_NUMERO*" not in especiais_mapeados:
                 headers.append("BO_NUMERO")
-            if "*DATA_DO_REGISTRO*" not in db_keywords:
+                mapeamento_exibicao["BO_NUMERO"] = "BO_NUMERO"
+            if "*DATA_DO_REGISTRO*" not in especiais_mapeados:
                 headers.append("DATA_DO_REGISTRO")
-            if "*HORA_DO_REGISTRO*" not in db_keywords:
+                mapeamento_exibicao["DATA_DO_REGISTRO"] = "DATA_DO_REGISTRO"
+            if "*HORA_DO_REGISTRO*" not in especiais_mapeados:
                 headers.append("HORA_DO_REGISTRO")
+                mapeamento_exibicao["HORA_DO_REGISTRO"] = "HORA_DO_REGISTRO"
                 
             for c in colunas_candidatas:
                 nome_norm = c["nome"]
                 if nome_norm not in headers:
                     headers.append(nome_norm)
                     
-            return headers
+            # Converte para os nomes originais de exibição
+            headers_exibicao = [mapeamento_exibicao.get(h, h) for h in headers]
+            return headers_exibicao
 
         colunas_preview = obter_colunas_preview_layout(layout_id)
         if colunas_preview:
@@ -2990,15 +3017,17 @@ elif menu.startswith("servico_"):
                     if not st.checkbox("Estou ciente e desejo executar a consulta mesmo assim.", key=f"chk_ciente_{id_servico}"):
                         pode_executar = False
                 
-                col_btn_run, col_btn_cancel, col_btn_logoff = st.columns(3)
+                col_btn_run, col_btn_download_only, col_btn_cancel, col_btn_logoff = st.columns(4)
                 
                 with col_btn_run:
                     btn_run = st.button("🚀 Consultar e Extrair Dados", type="primary", use_container_width=True, disabled=not pode_executar, key=f"btn_run_{id_servico}")
+                with col_btn_download_only:
+                    btn_download_only = st.button("📥 Consultar e Baixar PDFs", use_container_width=True, disabled=not pode_executar, key=f"btn_download_only_{id_servico}")
                 with col_btn_cancel:
                     placeholder_cancel = st.empty()
-                    btn_cancel = placeholder_cancel.button("⏹️ Cancelar Extração Agora", use_container_width=True, disabled=not btn_run, key=f"btn_interrupt_{id_servico}")
+                    btn_cancel = placeholder_cancel.button("⏹️ Cancelar Processamento", use_container_width=True, disabled=not (btn_run or btn_download_only), key=f"btn_interrupt_{id_servico}")
                 with col_btn_logoff:
-                    btn_logoff = st.button("🔴 Encerrar Sessão", use_container_width=True, disabled=(btn_run), key=f"btn_logoff_{id_servico}")
+                    btn_logoff = st.button("🔴 Encerrar Sessão", use_container_width=True, disabled=(btn_run or btn_download_only), key=f"btn_logoff_{id_servico}")
                 
                 if btn_logoff:
                     with st.spinner("Enviando comando de logoff para o servidor..."):
@@ -3149,7 +3178,120 @@ elif menu.startswith("servico_"):
                             if os.path.exists(temp_dir):
                                 shutil.rmtree(temp_dir, ignore_errors=True)
                             # Desativa o botão de cancelar imediatamente após o término do processamento
-                            placeholder_cancel.button("⏹️ Cancelar Extração Agora", use_container_width=True, disabled=True, key=f"btn_interrupt_done_{id_servico}")
+                            placeholder_cancel.button("⏹️ Cancelar Processamento", use_container_width=True, disabled=True, key=f"btn_interrupt_done_{id_servico}")
+                
+                if btn_download_only:
+                    # Validação em tempo de execução para garantir que as tags obrigatórias estão na URL base
+                    tags_obrigatorias = ["{DataInicialRegistro}", "{DataFinalRegistro}", "{idMunicipio}", "{size}"]
+                    tags_faltantes = [t for t in tags_obrigatorias if t not in url_consulta]
+                    if tags_faltantes:
+                        st.error(f"⚠️ Execução Abortada: O Endereço da Tela de Consulta cadastrado para este serviço SROP é inválido por não conter as tags obrigatórias: {', '.join(tags_faltantes)}. Por favor, corrija o cadastro do serviço.")
+                        st.stop()
+                        
+                    import shutil, os
+                    
+                    st.info("💡 **O download dos PDFs começou!** Se quiser cancelar, clique no botão **Cancelar Processamento** acima.")
+                        
+                    with st.status("Iniciando consulta e download dos PDFs...", expanded=True) as status_ui:
+                        def atualizar_status_dl(mensagem: str):
+                            status_ui.update(label=mensagem, state="running", expanded=True)
+                            st.write(mensagem)
+                        
+                        # Pasta temporária para salvar os PDFs baixados
+                        temp_dir = os.path.join(os.getcwd(), "dados_pdf_temp")
+                        if os.path.exists(temp_dir):
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                        os.makedirs(temp_dir, exist_ok=True)
+                        
+                        try:
+                            import automacao as aut
+                            
+                            # Formata as datas para YYYY-MM-DD
+                            data_ini_str = data_inicial.strftime("%Y-%m-%d")
+                            data_fim_str = data_final.strftime("%Y-%m-%d")
+                            
+                            pdf_paths = aut.consultar_e_baixar_srop(
+                                session_state=st.session_state[cookie_key],
+                                url_consulta=url_consulta,
+                                url_pdf_template=url_pdf,
+                                data_inicial=data_ini_str,
+                                data_final=data_fim_str,
+                                temp_dir=temp_dir,
+                                status_callback=atualizar_status_dl,
+                                id_municipio=id_municipio_val,
+                                size=size_val,
+                                numero_boletim=bo_val,
+                                data_ini_fato=data_ini_fato_str,
+                                data_fim_fato=data_fim_fato_str
+                            )
+                            
+                            if not pdf_paths:
+                                status_ui.update(label="Integração finalizada.", state="complete", expanded=True)
+                                st.warning("⚠️ Nenhum Boletim de Ocorrência foi retornado para o período selecionado.")
+                                st.session_state.pop(f"zip_only_{id_servico}", None)
+                            else:
+                                atualizar_status_dl(f"Compactando {len(pdf_paths)} arquivos PDF baixados...")
+                                
+                                # Comprime os PDFs baixados em um arquivo ZIP e guarda na sessão
+                                import zipfile
+                                import io
+                                zip_buffer = io.BytesIO()
+                                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                                    for pdf_path in pdf_paths:
+                                        if os.path.exists(pdf_path):
+                                            zip_file.write(pdf_path, os.path.basename(pdf_path))
+                                
+                                st.session_state[f"zip_only_{id_servico}"] = zip_buffer.getvalue()
+                                status_ui.update(label="Download concluído com sucesso!", state="complete", expanded=True)
+                                st.success(f"🎉 Download concluído! {len(pdf_paths)} PDFs baixados com sucesso e disponíveis para download abaixo.")
+                                # Limpa a chave do OCR caso ela existisse para não misturar resultados antigos
+                                st.session_state.pop(result_key, None)
+                                
+                        except Exception as error_exec:
+                            status_ui.update(label="Ocorreu um erro na consulta.", state="error", expanded=True)
+                            err_str = str(error_exec)
+                            st.error(f"❌ {err_str}")
+                            if "Sessão expirada" in err_str:
+                                st.session_state.pop(cookie_key, None)
+                                db.limpar_sessao(id_servico)
+                                st.warning("🔄 Sessão expirada no portal. O banco de dados foi limpo. Por favor, realize o login novamente.")
+                                st.rerun()
+                        finally:
+                            # Limpa os PDFs temporários do servidor
+                            if os.path.exists(temp_dir):
+                                shutil.rmtree(temp_dir, ignore_errors=True)
+                            # Desativa o botão de cancelar
+                            placeholder_cancel.button("⏹️ Cancelar Processamento", use_container_width=True, disabled=True, key=f"btn_interrupt_dl_done_{id_servico}")
+            
+            # Exibe o botão de download do ZIP gerado por apenas baixar PDFs
+            zip_only_key = f"zip_only_{id_servico}"
+            if zip_only_key in st.session_state:
+                st.markdown("---")
+                st.subheader("📥 Arquivos PDF Disponíveis para Download")
+                
+                dt_ini_lbl = "consulta"
+                dt_fim_lbl = "consulta"
+                if f"exec_dt_ini_{id_servico}" in st.session_state:
+                    dt_ini_lbl = st.session_state[f"exec_dt_ini_{id_servico}"].strftime('%d-%m-%Y')
+                if f"exec_dt_fim_{id_servico}" in st.session_state:
+                    dt_fim_lbl = st.session_state[f"exec_dt_fim_{id_servico}"].strftime('%d-%m-%Y')
+                
+                nome_zip = f"srop_bo_por_data_registro_{dt_ini_lbl}-{dt_fim_lbl}.zip"
+                
+                c_dl1, c_dl2 = st.columns([3, 1])
+                with c_dl1:
+                    st.download_button(
+                        label="📥 Baixar PDFs Compactados (.zip)",
+                        data=st.session_state[zip_only_key],
+                        file_name=nome_zip,
+                        mime="application/zip",
+                        use_container_width=True,
+                        key=f"btn_dl_zip_only_{id_servico}"
+                    )
+                with c_dl2:
+                    if st.button("🗑️ Limpar Arquivos", key=f"btn_clear_zip_only_{id_servico}", use_container_width=True):
+                        st.session_state.pop(zip_only_key, None)
+                        st.rerun()
             
             # Exibe o resultado e o botão de download se houver dados no session_state
             if result_key in st.session_state:

@@ -10,6 +10,7 @@ echo.
 echo [1/3] Fechando o Servidor de Seguranca (Keycloak)...
 :: O Keycloak roda sobre o Java. Fechar o Java derruba o Keycloak imediatamente.
 taskkill /F /IM java.exe /T > nul 2>&1
+powershell -Command "try { $c = Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue; if ($c) { Stop-Process -Id ($c.OwningProcess | Select -Unique) -Force -ErrorAction SilentlyContinue } } catch {}" > nul 2>&1
 
 echo [2/3] Fechando o Aplicativo (Streamlit)...
 :: Localiza os processos do Python que estão rodando o Streamlit e mata eles

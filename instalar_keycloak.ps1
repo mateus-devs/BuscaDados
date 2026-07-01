@@ -1,5 +1,23 @@
 $ErrorActionPreference = "Stop"
 
+# Libera a porta 8080 matando processos órfãos que possam travar o banco H2
+$PortKeycloak = 8080
+try {
+    $Connection = Get-NetTCPConnection -LocalPort $PortKeycloak -ErrorAction SilentlyContinue
+    if ($Connection) {
+        $ProcessId = $Connection.OwningProcess | Select-Object -Unique
+        foreach ($pid in $ProcessId) {
+            if ($pid -gt 0) {
+                Write-Host "Processo órfão ($pid) detectado ocupando a porta $PortKeycloak. Finalizando para destravar o banco H2..." -ForegroundColor Yellow
+                Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Start-Sleep -Seconds 2
+    }
+} catch {
+    Write-Host "Aviso: Não foi possível verificar ou encerrar processos na porta $PortKeycloak automaticamente." -ForegroundColor Cyan
+}
+
 $KeycloakVersion = "24.0.3"
 $KeycloakUrl = "https://github.com/keycloak/keycloak/releases/download/$KeycloakVersion/keycloak-$KeycloakVersion.zip"
 $ZipFile = "keycloak-$KeycloakVersion.zip"

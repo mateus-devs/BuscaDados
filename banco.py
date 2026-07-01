@@ -2478,6 +2478,20 @@ def excluir_grupo(grupo_id: int) -> bool:
     conn.close()
     return True
 
+def resetar_ordenacao_grupo(grupo_id: int) -> bool:
+    conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), dbname=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'))
+    try:
+        cursor = conn.cursor()
+        # Reseta os itens do grupo para Ordem = 1 e Ordem_Excel = 1
+        cursor.execute("UPDATE layout_itens SET Ordem = 1, Ordem_Excel = 1 WHERE Grupo_ID = %s", (grupo_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Erro ao resetar ordenacao do grupo: {e}")
+        return False
+    finally:
+        conn.close()
+
 def listar_itens(grupo_id: int) -> pd.DataFrame:
     try:
         return ajustar_colunas(pd.read_sql("SELECT * FROM layout_itens WHERE Grupo_ID = %s ORDER BY Ordem", engine, params=(grupo_id,)))

@@ -8,6 +8,7 @@ echo ==================================================
 echo [0/2] Limpando processos antigos em segundo plano para liberar portas...
 :: Garante que nenhuma instância órfã do Keycloak (Java) ou Streamlit (Python) esteja rodando
 taskkill /F /IM java.exe /T > nul 2>&1
+powershell -Command "try { $c = Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue; if ($c) { Stop-Process -Id ($c.OwningProcess | Select -Unique) -Force -ErrorAction SilentlyContinue } } catch {}" > nul 2>&1
 wmic process where "name='python.exe' and commandline like '%%streamlit%%'" call terminate > nul 2>&1
 timeout /t 2 /nobreak > nul
 
