@@ -83,6 +83,7 @@ import auth_utils
 if "mensagem_sucesso" not in st.session_state: st.session_state.mensagem_sucesso = None
 if "menu_override" not in st.session_state: st.session_state.menu_override = None
 if "radio_selecionado" not in st.session_state: st.session_state.radio_selecionado = "🗺️ Manutenção de Municípios"
+if "ultimo_menu_acessado" not in st.session_state: st.session_state.ultimo_menu_acessado = None
 
 if "sub_tela_mun" not in st.session_state: st.session_state.sub_tela_mun = "listar"
 if "sub_tela_bai" not in st.session_state: st.session_state.sub_tela_bai = "listar"
@@ -288,6 +289,14 @@ if radio_val is not None:
 # Definimos a variável final 'menu' a ser usada nas telas
 menu = st.session_state.menu_override if st.session_state.menu_override else radio_val
 
+# Se o menu mudou, resetamos as sub-telas de navegação das outras páginas para a listagem inicial
+if st.session_state.ultimo_menu_acessado != menu:
+    st.session_state.sub_tela_mun = "listar"
+    st.session_state.sub_tela_bai = "listar"
+    st.session_state.sub_tela_upm = "listar"
+    st.session_state.sub_tela_ser = "listar"
+    st.session_state.ultimo_menu_acessado = menu
+
 # --- EXIBIÇÃO DE SERVIÇOS CADASTRADOS NO SIDEBAR ---
 st.sidebar.markdown("<hr style='margin: 15px 0px 15px 0px;'>", unsafe_allow_html=True)
 st.sidebar.subheader("🔌 Serviços Ativos")
@@ -377,7 +386,7 @@ if menu == "🏙️ Manutenção de Municípios":
             st.info("Nenhum município cadastrado no banco de dados ainda.")
         else:
             st.subheader(f"Municípios Cadastrados (Página {st.session_state.pagina_mun} de {total_paginas_mun})")
-            col_id, col_nome, col_est, col_srop, col_acoes = st.columns([0.8, 3, 2, 2, 3.2])
+            col_id, col_nome, col_est, col_srop, col_acoes = st.columns([0.8, 3.0, 2.0, 2.0, 3.2])
             with col_id: st.write("**ID**")
             with col_nome: st.write("**Município**")
             with col_est: st.write("**Estado**")
@@ -408,7 +417,7 @@ if menu == "🏙️ Manutenção de Municípios":
                 if pd.isna(srop_atual) or srop_atual is None:
                     srop_atual = ""
                 
-                c_id, c_nome, c_est, c_srop, c_vis, c_edt, c_exc = st.columns([0.8, 3, 2, 2, 0.9, 0.9, 1.4])
+                c_id, c_nome, c_est, c_srop, c_vis, c_edt, c_exc = st.columns([0.8, 3.0, 2.0, 2.0, 1.0, 1.0, 1.2])
                 c_id.write(f"`{id_atual}`")
                 c_nome.write(mun_atual)
                 c_est.write(est_atual)
@@ -429,7 +438,9 @@ if menu == "🏙️ Manutenção de Municípios":
             st.write("")
             col_ant, col_e1, col_pag, col_e2, col_prox = st.columns([1, 1, 0.8, 1, 1])
             if col_ant.button("⬅️ Página Anterior", disabled=(st.session_state.pagina_mun <= 1), use_container_width=True, key="btn_ant_mun"):
-                st.session_state.pagina_mun -= 1; st.rerun()
+                st.session_state.pagina_mun -= 1
+                st.session_state.combo_pag_mun = st.session_state.pagina_mun
+                st.rerun()
                 
             def set_page_mun():
                 st.session_state.pagina_mun = st.session_state.combo_pag_mun
@@ -445,7 +456,9 @@ if menu == "🏙️ Manutenção de Municípios":
                 )
                 
             if col_prox.button("Próxima Página ➡️", disabled=(st.session_state.pagina_mun >= total_paginas_mun), use_container_width=True, key="btn_prox_mun"):
-                st.session_state.pagina_mun += 1; st.rerun()
+                st.session_state.pagina_mun += 1
+                st.session_state.combo_pag_mun = st.session_state.pagina_mun
+                st.rerun()
 
     elif st.session_state.sub_tela_mun == "formulario":
         modo = st.session_state.modo_form_mun; dados = st.session_state.dados_sel_mun
@@ -516,7 +529,7 @@ elif menu == "🏘️ Manutenção de Bairros":
             st.rerun()
             
         st.write("")
-        df_bai = db.listar_dados("bairros")
+        df_bai = db.listar_bairros_com_municipio()
         df_mun_existentes = db.listar_dados("municipios")
         
         if df_bai.empty:
@@ -590,7 +603,7 @@ elif menu == "🏘️ Manutenção de Bairros":
                 st.warning("Nenhum bairro encontrado para os filtros selecionados.")
             else:
                 st.subheader(f"Bairros Cadastrados (Página {st.session_state.pagina_bai} de {total_paginas_bai})")
-                col_id, col_nome, col_mun, col_est, col_acoes = st.columns([0.8, 2.5, 2.5, 2.0, 4.2])
+                col_id, col_nome, col_mun, col_est, col_acoes = st.columns([0.6, 2.2, 2.2, 1.6, 5.4])
                 with col_id: st.write("**ID**")
                 with col_nome: st.write("**Bairro**")
                 with col_mun: st.write("**Município Vinculado**")
@@ -598,21 +611,15 @@ elif menu == "🏘️ Manutenção de Bairros":
                 with col_acoes: st.write("**Ações Disponíveis**")
                 st.markdown("<hr style='margin: 0px 0px 10px 0px; border-color: #f0f2f6;'>", unsafe_allow_html=True)
                 
-                # Obtém o mapeamento de Município -> Estado para exibir na listagem
-                df_mun_all = db.listar_dados("municipios")
-                mapa_mun_estado = {}
-                if not df_mun_all.empty:
-                    mapa_mun_estado = {row["Municipio"].upper(): row["Estado"] for _, row in df_mun_all.iterrows()}
-                
                 for idx, row in df_bai_exibicao.iterrows():
                     id_atual = row["ID"]
                     bai_atual = row["Bairro"]
                     mun_atual = row["Municipio"]
                     
-                    # Obtém o estado correspondente de forma individual para cada linha
-                    est_atual = mapa_mun_estado.get(mun_atual.upper(), "-")
+                    # Obtém o estado correspondente a partir do JOIN
+                    est_atual = row.get("Estado", "-")
                     
-                    c_id, c_nome, c_mun, c_est, c_vis, c_edt, c_alt, c_exc = st.columns([0.8, 2.5, 2.5, 2.0, 0.8, 1.0, 1.4, 1.0])
+                    c_id, c_nome, c_mun, c_est, c_vis, c_edt, c_alt, c_exc = st.columns([0.6, 2.2, 2.2, 1.6, 1.2, 1.3, 1.3, 1.6])
                     c_id.write(f"`{id_atual}`")
                     c_nome.write(bai_atual)
                     c_mun.text(mun_atual)
@@ -634,7 +641,9 @@ elif menu == "🏘️ Manutenção de Bairros":
                 st.write("")
                 col_ant, col_e1, col_pag, col_e2, col_prox = st.columns([1, 1, 0.8, 1, 1])
                 if col_ant.button("⬅️ Página Anterior", disabled=(st.session_state.pagina_bai <= 1), use_container_width=True, key="btn_ant_bai"):
-                    st.session_state.pagina_bai -= 1; st.rerun()
+                    st.session_state.pagina_bai -= 1
+                    st.session_state.combo_pag_bai = st.session_state.pagina_bai
+                    st.rerun()
                     
                 def set_page_bai():
                     st.session_state.pagina_bai = st.session_state.combo_pag_bai
@@ -650,7 +659,9 @@ elif menu == "🏘️ Manutenção de Bairros":
                     )
                     
                 if col_prox.button("Próxima Página ➡️", disabled=(st.session_state.pagina_bai >= total_paginas_bai), use_container_width=True, key="btn_prox_bai"):
-                    st.session_state.pagina_bai += 1; st.rerun()
+                    st.session_state.pagina_bai += 1
+                    st.session_state.combo_pag_bai = st.session_state.pagina_bai
+                    st.rerun()
 
     elif st.session_state.sub_tela_bai == "formulario":
         modo = st.session_state.modo_form_bai; dados = st.session_state.dados_sel_bai
@@ -694,14 +705,20 @@ elif menu == "🏘️ Manutenção de Bairros":
             c_s, c_c = st.columns(2)
             if c_s.button("💾 Salvar Bairro", key="btn_salvar_bairro_db", width="stretch"):
                 if novo_bairro and lista_formatada:
+                    # Resolve o ID do município selecionado
                     municipio_puro = municipio_selecionado_combo.split(" / ")[0].strip()
+                    filtro_id = df_mun_existentes[df_mun_existentes["Municipio"] == municipio_puro]
+                    municipio_id = int(filtro_id.iloc[0]["ID"]) if not filtro_id.empty else None
                     
-                    if db.salvar_registro("bairros", {"Bairro": novo_bairro, "Municipio": municipio_puro}):
-                        st.session_state.sub_tela_bai = "listar"
-                        st.session_state.mensagem_sucesso = f"🎉 Bairro '{novo_bairro}' cadastrado com sucesso!"
-                        st.rerun()
-                    else: 
-                        st.error("⚠️ Erro: Este bairro já está cadastrado para o município selecionado!")
+                    if municipio_id:
+                        if db.salvar_registro("bairros", {"Bairro": novo_bairro, "Municipio_ID": municipio_id}):
+                            st.session_state.sub_tela_bai = "listar"
+                            st.session_state.mensagem_sucesso = f"🎉 Bairro '{novo_bairro}' cadastrado com sucesso!"
+                            st.rerun()
+                        else: 
+                            st.error("⚠️ Erro: Este bairro já está cadastrado para o município selecionado!")
+                    else:
+                        st.error("⚠️ Município inválido. Selecione um município válido.")
                 else: 
                     st.error("Por favor, preencha o nome do bairro.")
             if c_c.button("❌ Cancelar e Voltar", key="btn_cancelar_cad_bai", width="stretch"): 
@@ -715,14 +732,20 @@ elif menu == "🏘️ Manutenção de Bairros":
             c_up, c_cc = st.columns(2)
             if c_up.button("💾 Salvar Alterações", key="btn_update_bairro_db", width="stretch"):
                 if novo_bairro:
+                    # Resolve o ID do município selecionado
                     municipio_puro = municipio_selecionado_combo.split(" / ")[0].strip()
+                    filtro_id = df_mun_existentes[df_mun_existentes["Municipio"] == municipio_puro]
+                    municipio_id = int(filtro_id.iloc[0]["ID"]) if not filtro_id.empty else None
                     
-                    conn = db.obter_conexao(); cursor = conn.cursor()
-                    cursor.execute("UPDATE bairros SET Bairro = %s, Municipio = %s WHERE ID = %s", (novo_bairro, municipio_puro, dados["ID"]))
-                    conn.commit(); conn.close()
-                    st.session_state.sub_tela_bai = "listar"
-                    st.session_state.mensagem_sucesso = "✏️ Bairro atualizado com sucesso!"
-                    st.rerun()
+                    if municipio_id:
+                        conn = db.obter_conexao(); cursor = conn.cursor()
+                        cursor.execute("UPDATE bairros SET Bairro = %s, Municipio_ID = %s WHERE ID = %s", (novo_bairro, municipio_id, dados["ID"]))
+                        conn.commit(); conn.close()
+                        st.session_state.sub_tela_bai = "listar"
+                        st.session_state.mensagem_sucesso = "✏️ Bairro atualizado com sucesso!"
+                        st.rerun()
+                    else:
+                        st.error("⚠️ Município inválido. Selecione um município válido.")
                 else:
                     st.error("O nome do bairro não pode ficar em branco.")
             if c_cc.button("❌ Cancelar", key="btn_cancelar_edit_bai", width="stretch"): 
@@ -815,6 +838,16 @@ elif menu == "🚔 Manutenção de UPMs":
             
         st.write("")
         df_upm = db.listar_dados("upms")
+        if not df_upm.empty:
+            import re
+            def extrair_numero_para_ordenacao(series):
+                def converter_valor(val):
+                    val_str = str(val).strip()
+                    match = re.search(r'\d+', val_str)
+                    num = int(match.group()) if match else 999999
+                    return (num, val_str.lower())
+                return series.apply(converter_valor)
+            df_upm = df_upm.sort_values(by="UPM", key=extrair_numero_para_ordenacao)
         
         if "pagina_upm" not in st.session_state: st.session_state.pagina_upm = 1
         
@@ -866,7 +899,9 @@ elif menu == "🚔 Manutenção de UPMs":
             st.write("")
             col_ant, col_e1, col_pag, col_e2, col_prox = st.columns([1, 1, 0.8, 1, 1])
             if col_ant.button("⬅️ Página Anterior", disabled=(st.session_state.pagina_upm <= 1), use_container_width=True, key="btn_ant_upm"):
-                st.session_state.pagina_upm -= 1; st.rerun()
+                st.session_state.pagina_upm -= 1
+                st.session_state.combo_pag_upm = st.session_state.pagina_upm
+                st.rerun()
                 
             def set_page_upm():
                 st.session_state.pagina_upm = st.session_state.combo_pag_upm
@@ -882,7 +917,9 @@ elif menu == "🚔 Manutenção de UPMs":
                 )
                 
             if col_prox.button("Próxima Página ➡️", disabled=(st.session_state.pagina_upm >= total_paginas_upm), use_container_width=True, key="btn_prox_upm"):
-                st.session_state.pagina_upm += 1; st.rerun()
+                st.session_state.pagina_upm += 1
+                st.session_state.combo_pag_upm = st.session_state.pagina_upm
+                st.rerun()
 
     elif st.session_state.sub_tela_upm == "formulario":
         modo = st.session_state.modo_form_upm; dados = st.session_state.dados_sel_upm
@@ -903,7 +940,7 @@ elif menu == "🚔 Manutenção de UPMs":
             c_s, c_c = st.columns(2)
             if c_s.button("💾 Salvar no Banco", key="btn_salvar_upm", width="stretch"):
                 if nome_upm:
-                    if db.salvar_registro("upms", {"UPM": nome_upm, "Descricao": descricao_upm, "Bairro": "", "Municipio": "", "Estado": ""}):
+                    if db.salvar_registro("upms", {"UPM": nome_upm, "Descricao": descricao_upm}):
                         st.session_state.sub_tela_upm = "listar"; st.session_state.mensagem_sucesso = f"🎉 UPM '{nome_upm}' cadastrada com sucesso!"; st.rerun()
                     else: st.error(f"⚠️ Erro: A UPM '{nome_upm}' já existe!")
                 else: st.error("Por favor, preencha o nome/identificador da UPM.")
@@ -949,25 +986,22 @@ elif menu == "🚔 Manutenção de UPMs":
         col_upm_v.text_input("UPM", value=dados["UPM"], disabled=True, key="upm_vinc_view_nome")
         col_desc_v.text_area("Descrição", value=dados.get("Descricao", ""), disabled=True, key="upm_vinc_view_desc", height=68)
         
-        df_b = db.listar_dados("bairros"); df_m = db.listar_dados("municipios")
+        df_b = db.listar_bairros_com_municipio(); df_m = db.listar_dados("municipios")
         
         if df_b.empty:
             st.warning("Cadastre bairros antes de criar vínculos.")
             if st.button("⬅️ Voltar", width="stretch", key="upm_vinc_back_empty"):
                 st.session_state.sub_tela_upm = "listar"; st.rerun()
         else:
-            # Junta bairros com municípios para exibição completa
-            df_bairros_completo = df_b.merge(df_m, on="Municipio", how="left", suffixes=("_bairro", "_municipio"))
+            # Bairros já vem com Municipio e Estado via JOIN — sem necessidade de merge
+            df_bairros_completo = df_b.copy()
             df_bairros_completo["Exibicao"] = df_bairros_completo["Bairro"] + " (" + df_bairros_completo["Municipio"] + ")"
             
             # Inicializa a lista de selecionados no session_state para persistência
             if "selected_bairro_ids" not in st.session_state:
                 bairros_vinculados = db.listar_bairros_vinculados(dados["ID"])
                 st.session_state.selected_bairro_ids = set(bairros_vinculados["BairroID"].tolist())
-                if not bairros_vinculados.empty:
-                    st.session_state.vinc_default_mun = bairros_vinculados.iloc[0]["Municipio"]
-                else:
-                    st.session_state.vinc_default_mun = "Todos os Municípios"
+                st.session_state.vinc_default_mun = "Todos os Municípios"
                 
             st.markdown("<hr style='margin: 10px 0px 20px 0px; border-color: #f0f2f6;'>", unsafe_allow_html=True)
             
@@ -1016,7 +1050,7 @@ elif menu == "🚔 Manutenção de UPMs":
                 st.session_state.ultima_busca_txt = busca_txt
 
             # Ordena bairros colocando os atualmente selecionados no topo em tempo real
-            df_bairros_completo["Vinculado"] = df_bairros_completo["ID_bairro"].apply(
+            df_bairros_completo["Vinculado"] = df_bairros_completo["ID"].apply(
                 lambda x: x in st.session_state.selected_bairro_ids
             )
             df_ordenado = df_bairros_completo.sort_values(
@@ -1070,7 +1104,7 @@ elif menu == "🚔 Manutenção de UPMs":
 
                 # Renderiza cada linha da tabela interativa
                 for idx, row in df_pagina.iterrows():
-                    b_id = int(row["ID_bairro"])
+                    b_id = int(row["ID"])
                     b_nome = row["Bairro"]
                     b_mun = row["Municipio"]
                     is_sel = b_id in st.session_state.selected_bairro_ids
@@ -2135,6 +2169,13 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
     st.write("Envie sua planilha Excel de Ocorrências (contendo as colunas **Bairro** e **Municipio**). O robô irá higienizar os nomes (corrigindo erros e substituindo apelidos) e criará automaticamente uma nova coluna com a **UPM** correspondente.")
     st.info("🧠 **Inteligência Artificial Ativa:** Se a planilha possuir as colunas **Narrativa** e **Tipo Local 2**, o robô analisará o texto e preencherá automaticamente a coluna **Tipo Local 2**, preservando o Tipo Local original.")
     
+    # Checkbox profissional para ativação opcional da IA (fixo e desmarcado por padrão)
+    usar_ia = st.checkbox(
+        "🧠 Executar Classificação Cognitiva de Tipo Local via IA", 
+        value=False, 
+        help="Utiliza Inteligência Artificial (Gemini) para categorizar a coluna 'Tipo Local 2' com base no texto da Narrativa. Se desmarcado, o processamento fará apenas a higienização de nomes e injeção de UPMs."
+    )
+    
     def reset_processar():
         st.session_state.processar_clicado = False
         st.session_state.interromper = False
@@ -2142,6 +2183,7 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
     uploaded_file = st.file_uploader("Escolha um arquivo XLS ou XLSX para tratamento", type=["xls", "xlsx"], on_change=reset_processar)
     
     if uploaded_file is not None:
+        st.write("")
         col_btn1, col_btn2, col_btn3 = st.columns([2, 2, 4])
         with col_btn1:
             if st.button("▶️ Iniciar Processamento", use_container_width=True):
@@ -2347,7 +2389,7 @@ elif menu == "⚡ Tratar Planilha (Injetar UPM)":
                     if col_tipo2:
                         df_upload[col_tipo2] = df_upload[col_tipo2].astype(object)
                         
-                    if col_narrativa and col_tipo2 and ia.GENAI_DISPONIVEL and ia.GCP_PROJECT_ID and db.obter_prompt_ativo("Tipo Local"):
+                    if usar_ia and col_narrativa and col_tipo2 and ia.GENAI_DISPONIVEL and ia.GCP_PROJECT_ID and db.obter_prompt_ativo("Tipo Local"):
                         st.info("🧠 Iniciando Classificação Inteligente de Tipo Local via IA...")
                         tipos_validos = db.obter_set_tipos_local()
                         linhas_classificadas = 0
@@ -2746,18 +2788,24 @@ elif menu == "⚙️ Configurações":
                     conn_exp = db.engine
                     
                     df_mun_exp = db.ajustar_colunas(pd.read_sql("SELECT Municipio, Estado, id_municipio_srop FROM municipios", conn_exp))
-                    df_bai_exp = db.ajustar_colunas(pd.read_sql("SELECT Bairro, Municipio FROM bairros", conn_exp))
-                    df_alt_exp = db.ajustar_colunas(pd.read_sql("SELECT b.Bairro as Bairro_Oficial, b.Municipio, a.Nome_Alternativo FROM bairros_alternativos a JOIN bairros b ON a.Bairro_ID = b.ID", conn_exp))
+                    df_bai_exp = db.ajustar_colunas(pd.read_sql("""
+                        SELECT b.Bairro, m.Municipio
+                        FROM bairros b
+                        JOIN municipios m ON b.Municipio_ID = m.ID
+                        ORDER BY m.Municipio, b.Bairro
+                    """, conn_exp))
+                    df_alt_exp = db.ajustar_colunas(pd.read_sql("SELECT b.Bairro as Bairro_Oficial, m.Municipio, a.Nome_Alternativo FROM bairros_alternativos a JOIN bairros b ON a.Bairro_ID = b.ID JOIN municipios m ON b.Municipio_ID = m.ID", conn_exp))
                     df_upm_exp = pd.read_sql("""
                         SELECT 
                             u.UPM, 
-                            u.Descricao, 
-                            COALESCE(b.Bairro, u.Bairro) as Bairro, 
-                            COALESCE(b.Municipio, u.Municipio) as Municipio, 
-                            u.Estado 
+                            u.Descricao,
+                            b.Bairro,
+                            m.Municipio,
+                            m.Estado
                         FROM upms u 
-                        LEFT JOIN upm_bairros ub ON u.ID = ub.UPM_ID 
-                        LEFT JOIN bairros b ON ub.Bairro_ID = b.ID
+                        JOIN upm_bairros ub ON u.ID = ub.UPM_ID 
+                        JOIN bairros b ON ub.Bairro_ID = b.ID
+                        JOIN municipios m ON b.Municipio_ID = m.ID
                     """, conn_exp)
                     df_serv_exp = db.ajustar_colunas(pd.read_sql("SELECT Nome, UrlLogin, UrlConsulta, UrlPdf, Login, Senha, DuplaAutenticacao, Tipo, Status, Exibir_No_Menu FROM servicos", conn_exp))
                     

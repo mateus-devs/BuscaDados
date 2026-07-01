@@ -209,6 +209,7 @@ import urllib.parse
 COLUNAS_MAP = {
     'id': 'ID',
     'municipio': 'Municipio',
+    'municipio_id': 'Municipio_ID',
     'estado': 'Estado',
     'bairro': 'Bairro',
     'upm': 'UPM',
@@ -304,7 +305,11 @@ def inicializar_banco():
 
         Bairro TEXT NOT NULL,
 
-        Municipio TEXT NOT NULL
+        Municipio_ID INTEGER NOT NULL,
+
+        CONSTRAINT fk_bairros_municipio
+            FOREIGN KEY (Municipio_ID) REFERENCES municipios(ID)
+            ON UPDATE CASCADE ON DELETE RESTRICT
 
     )
 
@@ -324,11 +329,11 @@ def inicializar_banco():
 
         Descricao TEXT NOT NULL DEFAULT '',
 
-        Bairro TEXT NOT NULL,
+        Municipio_ID INTEGER,
 
-        Municipio TEXT NOT NULL,
-
-        Estado TEXT NOT NULL
+        CONSTRAINT fk_upms_municipio
+            FOREIGN KEY (Municipio_ID) REFERENCES municipios(ID)
+            ON UPDATE CASCADE ON DELETE SET NULL
 
     )
 
@@ -480,13 +485,92 @@ def inicializar_banco():
     )
     """)
 
-    # Se o banco já existir, garanta a coluna Descricao na tabela de UPMs
+    # -----------------------------------------------------------------------
+    # Migração automática: adiciona Municipio_ID em bairros (banco existente)
+    # -----------------------------------------------------------------------
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='bairros'")
+    colunas_bai = [row[0].lower() for row in cursor.fetchall()]
 
+    if "municipio_id" not in colunas_bai:
+        # Adiciona a coluna FK (nullable temporariamente)
+        cursor.execute("ALTER TABLE bairros ADD COLUMN IF NOT EXISTS Municipio_ID INTEGER")
+        # Popula com base no nome do município
+        cursor.execute("""
+            UPDATE bairros b
+            SET Municipio_ID = m.ID
+            FROM municipios m
+            WHERE LOWER(TRIM(b.Municipio)) = LOWER(TRIM(m.Municipio))
+            AND b.Municipio_ID IS NULL
+        """)
+        # Torna NOT NULL somente se todos foram preenchidos
+        cursor.execute("SELECT COUNT(*) FROM bairros WHERE Municipio_ID IS NULL")
+        orfaos_bai = cursor.fetchone()[0]
+        if orfaos_bai == 0:
+            cursor.execute("ALTER TABLE bairros ALTER COLUMN Municipio_ID SET NOT NULL")
+            # Adiciona FK se não existir
+            cursor.execute("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'fk_bairros_municipio' AND conrelid = 'bairros'::regclass
+                    ) THEN
+                        ALTER TABLE bairros
+                            ADD CONSTRAINT fk_bairros_municipio
+                            FOREIGN KEY (Municipio_ID) REFERENCES municipios(ID)
+                            ON UPDATE CASCADE ON DELETE RESTRICT;
+                    END IF;
+                END $$;
+            """)
+
+    # Garante a remoção da coluna antiga de texto "Municipio" caso a migração já tenha sido concluída
+    if "municipio_id" in colunas_bai and "municipio" in colunas_bai:
+        cursor.execute("ALTER TABLE bairros DROP COLUMN IF EXISTS Municipio")
+
+    # -----------------------------------------------------------------------
+    # Migração automática: adiciona Municipio_ID em upms (banco existente)
+    # -----------------------------------------------------------------------
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='upms'")
+    colunas_upm = [row[0].lower() for row in cursor.fetchall()]
 
-    colunas_upm = [row[0] for row in cursor.fetchall()]
+    if "municipio_id" not in colunas_upm:
+        cursor.execute("ALTER TABLE upms ADD COLUMN IF NOT EXISTS Municipio_ID INTEGER")
+        # Popula com base no nome do município (se coluna Municipio ainda existir)
+        if "municipio" in colunas_upm:
+            cursor.execute("""
+                UPDATE upms u
+                SET Municipio_ID = m.ID
+                FROM municipios m
+                WHERE LOWER(TRIM(u.Municipio)) = LOWER(TRIM(m.Municipio))
+                AND u.Municipio_ID IS NULL
+            """)
+        # Adiciona FK se não existir
+        cursor.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'fk_upms_municipio' AND conrelid = 'upms'::regclass
+                ) THEN
+                    ALTER TABLE upms
+                        ADD CONSTRAINT fk_upms_municipio
+                        FOREIGN KEY (Municipio_ID) REFERENCES municipios(ID)
+                        ON UPDATE CASCADE ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """)
 
-    if "descricao" not in [c.lower() for c in colunas_upm]:
+    # Garante a remoção das colunas antigas de texto de upms caso a migração já tenha sido concluída
+    if "municipio_id" in colunas_upm:
+        for col_antiga in ['municipio', 'bairro', 'estado']:
+            if col_antiga in colunas_upm:
+                cursor.execute(f"ALTER TABLE upms DROP COLUMN IF EXISTS {col_antiga}")
+
+    # -----------------------------------------------------------------------
+    # Garante coluna Descricao na tabela de UPMs (banco existente)
+    # -----------------------------------------------------------------------
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='upms'")
+    colunas_upm = [row[0].lower() for row in cursor.fetchall()]
+
+    if "descricao" not in colunas_upm:
 
         cursor.execute("ALTER TABLE upms ADD COLUMN Descricao TEXT NOT NULL DEFAULT ''")
 
@@ -629,9 +713,9 @@ def salvar_registro(tabela: str, dados_dict: dict) -> bool:
 
         bairro = dados_salvar["Bairro"].strip()
 
-        municipio = dados_salvar["Municipio"]
+        municipio_id = dados_salvar.get("Municipio_ID")
 
-        cursor.execute("SELECT 1 FROM bairros WHERE LOWER(Bairro) = LOWER(%s) AND Municipio = %s", (bairro, municipio))
+        cursor.execute("SELECT 1 FROM bairros WHERE LOWER(Bairro) = LOWER(%s) AND Municipio_ID = %s", (bairro, municipio_id))
 
         if cursor.fetchone():
 
@@ -690,6 +774,42 @@ def salvar_registro(tabela: str, dados_dict: dict) -> bool:
 
 
 
+def listar_bairros_com_municipio() -> pd.DataFrame:
+
+    """Retorna todos os bairros com JOIN na tabela de municípios (nome e estado)"""
+
+    query = """
+
+    SELECT
+
+        b.ID,
+
+        b.Bairro,
+
+        b.Municipio_ID,
+
+        m.Municipio,
+
+        m.Estado
+
+    FROM bairros b
+
+    JOIN municipios m ON b.Municipio_ID = m.ID
+
+    ORDER BY m.Municipio, b.Bairro
+
+    """
+
+    try:
+
+        return ajustar_colunas(pd.read_sql(query, engine))
+
+    except Exception:
+
+        return pd.DataFrame()
+
+
+
 def listar_bairros_vinculados(upm_id: int) -> pd.DataFrame:
 
     query = """
@@ -702,15 +822,21 @@ def listar_bairros_vinculados(upm_id: int) -> pd.DataFrame:
 
         b.Bairro,
 
-        b.Municipio
+        b.Municipio_ID,
+
+        m.Municipio,
+
+        m.Estado
 
     FROM upm_bairros ub
 
     JOIN bairros b ON ub.Bairro_ID = b.ID
 
+    JOIN municipios m ON b.Municipio_ID = m.ID
+
     WHERE ub.UPM_ID = %s
 
-    ORDER BY b.Municipio, b.Bairro
+    ORDER BY m.Municipio, b.Bairro
 
     """
 
@@ -756,13 +882,15 @@ def obter_mapeamento_upms() -> dict:
 
     query = """
 
-    SELECT b.Bairro, b.Municipio, u.UPM
+    SELECT b.Bairro, m.Municipio, u.UPM
 
     FROM upms u
 
     JOIN upm_bairros ub ON u.ID = ub.UPM_ID
 
     JOIN bairros b ON ub.Bairro_ID = b.ID
+
+    JOIN municipios m ON b.Municipio_ID = m.ID
 
     """
 
@@ -818,7 +946,11 @@ def obter_mapeamento_nomes_bairros() -> dict:
 
     cursor = conn.cursor()
 
-    cursor.execute("SELECT Bairro, Municipio FROM bairros")
+    cursor.execute("""
+        SELECT b.Bairro, m.Municipio
+        FROM bairros b
+        JOIN municipios m ON b.Municipio_ID = m.ID
+    """)
 
     rows = cursor.fetchall()
 
@@ -944,11 +1076,13 @@ def obter_mapeamento_alternativo_bairros() -> dict:
 
     query = """
 
-    SELECT ba.Nome_Alternativo, b.Bairro, b.Municipio
+    SELECT ba.Nome_Alternativo, b.Bairro, m.Municipio
 
     FROM bairros_alternativos ba
 
     JOIN bairros b ON ba.Bairro_ID = b.ID
+
+    JOIN municipios m ON b.Municipio_ID = m.ID
 
     """
 
@@ -1132,7 +1266,8 @@ def importar_municipios_lote(df: pd.DataFrame) -> dict:
 
 def importar_bairros_lote(df: pd.DataFrame) -> dict:
 
-    """Importa bairros a partir de um DataFrame, normalizando nomes e evitando duplicatas"""
+    """Importa bairros a partir de um DataFrame, normalizando nomes e evitando duplicatas.
+    Resolve o Municipio_ID pelo nome do município antes de inserir."""
 
     inseridos = 0
 
@@ -1154,15 +1289,23 @@ def importar_bairros_lote(df: pd.DataFrame) -> dict:
 
     
 
-    # 1. Carrega bairros existentes de forma normalizada (sem acentos e em minúsculas)
+    # 1. Carrega municípios em memória: nome_normalizado -> ID
 
-    cursor.execute("SELECT Bairro, Municipio FROM bairros")
+    cursor.execute("SELECT ID, Municipio FROM municipios")
 
-    existentes = {(normalizar_texto(row[0]), normalizar_texto(row[1])) for row in cursor.fetchall()}
+    municipios_map = {normalizar_texto(row[1]): row[0] for row in cursor.fetchall()}
 
     
 
-    # 2. Processa as linhas
+    # 2. Carrega bairros existentes de forma normalizada (Bairro, Municipio_ID)
+
+    cursor.execute("SELECT b.Bairro, b.Municipio_ID FROM bairros b")
+
+    existentes = {(normalizar_texto(row[0]), row[1]) for row in cursor.fetchall()}
+
+    
+
+    # 3. Processa as linhas
 
     for _, row in df.iterrows():
 
@@ -1186,9 +1329,23 @@ def importar_bairros_lote(df: pd.DataFrame) -> dict:
 
         mun_clean = padronizar_municipio(municipio)
 
+        mun_norm = normalizar_texto(mun_clean)
+
         
 
-        key_norm = (normalizar_texto(bai_clean), normalizar_texto(mun_clean))
+        # Resolve o ID do município
+
+        municipio_id = municipios_map.get(mun_norm)
+
+        if not municipio_id:
+
+            erros += 1
+
+            continue
+
+        
+
+        key_norm = (normalizar_texto(bai_clean), municipio_id)
 
         if key_norm in existentes:
 
@@ -1200,9 +1357,9 @@ def importar_bairros_lote(df: pd.DataFrame) -> dict:
 
                 cursor.execute(
 
-                    "INSERT INTO bairros (Bairro, Municipio) VALUES (%s, %s)",
+                    "INSERT INTO bairros (Bairro, Municipio_ID) VALUES (%s, %s)",
 
-                    (bai_clean, mun_clean)
+                    (bai_clean, municipio_id)
 
                 )
 
@@ -1252,7 +1409,11 @@ def importar_nomes_alternativos_lote(df: pd.DataFrame) -> dict:
 
     # 1. Mapeamento de Bairros Oficiais em memória (Bairro, Municipio) -> ID
 
-    cursor.execute("SELECT ID, Bairro, Municipio FROM bairros")
+    cursor.execute("""
+        SELECT b.ID, b.Bairro, m.Municipio
+        FROM bairros b
+        JOIN municipios m ON b.Municipio_ID = m.ID
+    """)
 
     bairros_map = {(str(row[1]).strip().upper(), str(row[2]).strip().upper()): row[0] for row in cursor.fetchall()}
 
@@ -1350,7 +1511,8 @@ def importar_nomes_alternativos_lote(df: pd.DataFrame) -> dict:
 
 def importar_upms_lote(df: pd.DataFrame) -> dict:
 
-    """Importa UPMs, seus bairros originais e atualiza a tabela de relacionamentos (upm_bairros)"""
+    """Importa UPMs e atualiza a tabela de relacionamentos (upm_bairros).
+    Resolve Municipio_ID pelo nome do município. Não armazena Bairro/Municipio/Estado como texto."""
 
     inseridos = 0
 
@@ -1380,9 +1542,9 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
     
 
-    # 2. Carrega Bairros existentes em memória (Bairro, Municipio) -> ID
+    # 2. Carrega Bairros existentes em memória (Bairro, Municipio_ID) -> ID
 
-    cursor.execute("SELECT ID, Bairro, Municipio FROM bairros")
+    cursor.execute("SELECT b.ID, b.Bairro, m.Municipio FROM bairros b JOIN municipios m ON b.Municipio_ID = m.ID")
 
     bairros_map = {(str(row[1]).strip().upper(), str(row[2]).strip().upper()): row[0] for row in cursor.fetchall()}
 
@@ -1406,8 +1568,6 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
         municipio = row.get("Municipio")
 
-        estado = row.get("Estado", "MT")
-
         
 
         if pd.isna(upm) or not str(upm).strip() or pd.isna(bairro) or pd.isna(municipio):
@@ -1426,15 +1586,9 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
         mun_clean = padronizar_municipio(municipio)
 
-        est_clean = str(estado).strip().upper()
+        
 
-        if len(est_clean) > 2 and " - " in est_clean:
-
-            est_clean = est_clean.split(" - ")[0].strip()
-
-            
-
-        # Insere ou busca ID da UPM
+        # Insere ou busca ID da UPM (apenas UPM e Descricao — sem texto de município)
 
         upm_id = upms_map.get(upm_clean)
 
@@ -1444,13 +1598,13 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
                 cursor.execute(
 
-                    "INSERT INTO upms (UPM, Descricao, Bairro, Municipio, Estado) VALUES (%s, %s, %s, %s, %s)",
+                    "INSERT INTO upms (UPM, Descricao) VALUES (%s, %s) RETURNING ID",
 
-                    (upm_clean, desc_clean, bai_clean, mun_clean, est_clean)
+                    (upm_clean, desc_clean)
 
                 )
 
-                upm_id = cursor.lastrowid
+                upm_id = cursor.fetchone()[0]
 
                 upms_map[upm_clean] = upm_id
 
@@ -1468,7 +1622,7 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
             
 
-        # Vínculo com o bairro
+        # Vínculo com o bairro via upm_bairros
 
         key_bairro = (bai_clean, mun_clean.upper())
 
@@ -1526,15 +1680,17 @@ def obter_municipios_com_bairro_todos_unico() -> dict:
 
     
 
-    # 1. Busca contagem de bairros por município
+    # 1. Busca contagem de bairros por município via JOIN
 
     query_contagem = """
 
-    SELECT Municipio, COUNT(*), MAX(Bairro)
+    SELECT m.Municipio, COUNT(*), MAX(b.Bairro)
 
-    FROM bairros
+    FROM bairros b
 
-    GROUP BY Municipio
+    JOIN municipios m ON b.Municipio_ID = m.ID
+
+    GROUP BY m.ID, m.Municipio
 
     """
 
@@ -1566,7 +1722,9 @@ def obter_municipios_com_bairro_todos_unico() -> dict:
 
         JOIN bairros b ON ub.Bairro_ID = b.ID
 
-        WHERE LOWER(b.Bairro) = 'todos' AND LOWER(b.Municipio) = LOWER(%s)
+        JOIN municipios m ON b.Municipio_ID = m.ID
+
+        WHERE LOWER(b.Bairro) = 'todos' AND LOWER(m.Municipio) = LOWER(%s)
 
         """
 
@@ -1578,39 +1736,11 @@ def obter_municipios_com_bairro_todos_unico() -> dict:
 
             mapa_mun_todos[normalizar_texto(mun)] = row[0]
 
-        key_norm = (normalizar_texto(bai_clean), normalizar_texto(mun_clean))
-
-        if key_norm in existentes:
-
-            pulados += 1
-
-        else:
-
-            try:
-
-                cursor.execute(
-
-                    "INSERT INTO bairros (Bairro, Municipio) VALUES (%s, %s)",
-
-                    (bai_clean, mun_clean)
-
-                )
-
-                existentes.add(key_norm)
-
-                inseridos += 1
-
-            except Exception:
-
-                erros += 1
-
-                
-
-    conn.commit()
+            
 
     conn.close()
 
-    return {"inseridos": inseridos, "pulados": pulados, "erros": erros}
+    return mapa_mun_todos
 
 
 
@@ -1642,7 +1772,11 @@ def importar_nomes_alternativos_lote(df: pd.DataFrame) -> dict:
 
     # 1. Mapeamento de Bairros Oficiais em memória (Bairro, Municipio) -> ID
 
-    cursor.execute("SELECT ID, Bairro, Municipio FROM bairros")
+    cursor.execute("""
+        SELECT b.ID, b.Bairro, m.Municipio
+        FROM bairros b
+        JOIN municipios m ON b.Municipio_ID = m.ID
+    """)
 
     bairros_map = {(str(row[1]).strip().upper(), str(row[2]).strip().upper()): row[0] for row in cursor.fetchall()}
 
@@ -1740,7 +1874,8 @@ def importar_nomes_alternativos_lote(df: pd.DataFrame) -> dict:
 
 def importar_upms_lote(df: pd.DataFrame) -> dict:
 
-    """Importa UPMs, seus bairros originais e atualiza a tabela de relacionamentos (upm_bairros)"""
+    """Importa UPMs e atualiza a tabela de relacionamentos (upm_bairros).
+    Resolve Municipio_ID pelo nome do município. Não armazena Bairro/Municipio/Estado como texto."""
 
     inseridos = 0
 
@@ -1770,9 +1905,9 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
     
 
-    # 2. Carrega Bairros existentes em memória (Bairro, Municipio) -> ID
+    # 2. Carrega Bairros existentes em memória (Bairro, Municipio) -> ID via JOIN
 
-    cursor.execute("SELECT ID, Bairro, Municipio FROM bairros")
+    cursor.execute("SELECT b.ID, b.Bairro, m.Municipio FROM bairros b JOIN municipios m ON b.Municipio_ID = m.ID")
 
     bairros_map = {(str(row[1]).strip().upper(), str(row[2]).strip().upper()): row[0] for row in cursor.fetchall()}
 
@@ -1796,8 +1931,6 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
         municipio = row.get("Municipio")
 
-        estado = row.get("Estado", "MT")
-
         
 
         if pd.isna(upm) or not str(upm).strip() or pd.isna(bairro) or pd.isna(municipio):
@@ -1816,15 +1949,9 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
         mun_clean = padronizar_municipio(municipio)
 
-        est_clean = str(estado).strip().upper()
+        
 
-        if len(est_clean) > 2 and " - " in est_clean:
-
-            est_clean = est_clean.split(" - ")[0].strip()
-
-            
-
-        # Insere ou busca ID da UPM
+        # Insere ou busca ID da UPM (apenas UPM e Descricao — sem texto de município)
 
         upm_id = upms_map.get(upm_clean)
 
@@ -1834,13 +1961,13 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
                 cursor.execute(
 
-                    "INSERT INTO upms (UPM, Descricao, Bairro, Municipio, Estado) VALUES (%s, %s, %s, %s, %s)",
+                    "INSERT INTO upms (UPM, Descricao) VALUES (%s, %s) RETURNING ID",
 
-                    (upm_clean, desc_clean, bai_clean, mun_clean, est_clean)
+                    (upm_clean, desc_clean)
 
                 )
 
-                upm_id = cursor.lastrowid
+                upm_id = cursor.fetchone()[0]
 
                 upms_map[upm_clean] = upm_id
 
@@ -1858,7 +1985,7 @@ def importar_upms_lote(df: pd.DataFrame) -> dict:
 
             
 
-        # Vínculo com o bairro
+        # Vínculo com o bairro via upm_bairros
 
         key_bairro = (bai_clean, mun_clean.upper())
 
@@ -1916,15 +2043,17 @@ def obter_municipios_com_bairro_todos_unico() -> dict:
 
     
 
-    # 1. Busca contagem de bairros por município
+    # 1. Busca contagem de bairros por município via JOIN
 
     query_contagem = """
 
-    SELECT Municipio, COUNT(*), MAX(Bairro)
+    SELECT m.Municipio, COUNT(*), MAX(b.Bairro)
 
-    FROM bairros
+    FROM bairros b
 
-    GROUP BY Municipio
+    JOIN municipios m ON b.Municipio_ID = m.ID
+
+    GROUP BY m.ID, m.Municipio
 
     """
 
@@ -1956,7 +2085,9 @@ def obter_municipios_com_bairro_todos_unico() -> dict:
 
         JOIN bairros b ON ub.Bairro_ID = b.ID
 
-        WHERE LOWER(b.Bairro) = 'todos' AND LOWER(b.Municipio) = LOWER(%s)
+        JOIN municipios m ON b.Municipio_ID = m.ID
+
+        WHERE LOWER(b.Bairro) = 'todos' AND LOWER(m.Municipio) = LOWER(%s)
 
         """
 

@@ -22,4 +22,7 @@ keycloak-*/
 keycloak-*.zip
 
 # Google Cloud credentials (stored securely in DB now)
-google-credentials.json
+google-credentials.json
+
+# Scripts de migracao de banco locais
+migracao_*.sql
